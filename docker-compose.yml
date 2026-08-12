@@ -6,6 +6,13 @@ services:
       - "8000:8000"
     volumes:
       - ./server:/usr/src/app
+      # Anonymous volume: keeps the image's .venv from being masked by the bind
+      # mount above (the host .venv is built for a different platform).
+      - /usr/src/app/.venv
+    environment:
+      # Wins over the same key in .env — the container's database always belongs in the
+      # bind-mounted data/ directory, whatever a developer's .env says for local runs.
+      DATABASE_URL: sqlite:///./data/app.db
     env_file:
       - ./server/.env
 

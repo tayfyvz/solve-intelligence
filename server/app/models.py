@@ -9,4 +9,5 @@ class Document(Base):
     content = Column(String)
 
 
-# Include your models here, and they will automatically be created as tables in the database on start-up
+# Include your models here, and they will automatically be created as tables in the
+# database on start-up

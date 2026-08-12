@@ -1,0 +1,4 @@
+# 152 MB of macOS-native binaries (esbuild, lightningcss); the image runs `npm ci` itself.
+node_modules
+dist
+.env

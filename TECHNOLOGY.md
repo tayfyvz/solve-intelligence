@@ -135,7 +135,8 @@ allowlist is complete rather than hoping.
 | **Don't sanitise** | Stored XSS in an app for law firms. |
 | **Sanitise on the client** | Client-side validation isn't a control; the API is reachable directly. |
 
-**Verified:** resolves to `nh3==0.3.6` on Python 3.14; wheels available for the Docker 3.13 target.
+**Verified:** locked at `nh3==0.3.6` on Python 3.13, and imported inside the `python:3.13-slim`
+image — the `cp38-abi3` manylinux wheel installs with no Rust toolchain.
 
 ### 2.3 `pydantic-settings` — configuration
 

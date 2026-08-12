@@ -1,0 +1,13 @@
+# The host venv is built for a different platform; the image builds its own.
+.venv
+
+# `**/` matters: the bytecode lives in app/__pycache__, and the host's is CPython 3.14.
+**/__pycache__/
+**/*.py[cod]
+
+# Runtime SQLite database — never bake a developer's data into the image.
+data/
+
+.env
+.pytest_cache/
+.ruff_cache/

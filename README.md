@@ -12,12 +12,22 @@ After completing the tasks below, add a couple of sentences to the end of this f
 
 ## Docker
 
-Make sure you create a .env file (see .env.example) with the OpenAI API key we have provided.
+From a clean clone, two commands:
 
-To build and run the application using Docker, execute the following command:
-
-```
+```sh
+cp server/.env.example server/.env   # then put the provided OpenAI API key in it
 docker-compose up --build
+```
+
+The copy is not optional: Compose resolves `env_file` up front, so `docker-compose up` fails
+with "env file … not found" if `server/.env` is missing.
+
+Client: http://localhost:5173 · API: http://localhost:8000
+
+If a rebuild ever picks up a stale dependency environment, clear the anonymous volumes:
+
+```sh
+docker compose down -v && docker-compose up --build
 ```
 
 ## Task 1: Implement Document Versioning
