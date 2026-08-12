@@ -30,5 +30,8 @@ export default [
     files: ["**/*.test.{ts,tsx}", "src/test/**/*.{ts,tsx}"],
     languageOptions: { globals: { ...globals.browser, ...globals.node } },
   },
-  { files: ["*.config.{js,ts}", "eslint.config.js"], languageOptions: { globals: globals.node } },
+  {
+    files: ["*.config.{js,ts}", "eslint.config.js", "scripts/**/*.mjs"],
+    languageOptions: { globals: globals.node },
+  },
 ];

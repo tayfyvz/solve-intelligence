@@ -39,7 +39,7 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.flake8-bugbear]
 # `db: Session = Depends(get_db)` is the FastAPI idiom; B008 flags it otherwise.
-extend-immutable-calls = ["fastapi.Depends"]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Path"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,0 +1,157 @@
+"""Task 1: versioning routes."""
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.config import get_settings
+
+DOC = 1
+VERSIONS = f"/api/documents/{DOC}/versions"
+
+
+def version_count(client: TestClient, document_id: int = DOC) -> int:
+    return len(client.get(f"/api/documents/{document_id}").json()["versions"])
+
+
+def test_put_updates_in_place_and_creates_no_version(client: TestClient) -> None:
+    """V1 — the most important assertion in the suite (challenge task 1.3)."""
+    before = version_count(client)
+    original = client.get(f"{VERSIONS}/1").json()["content"]
+
+    response = client.put(f"{VERSIONS}/1", json={"content": "<p>edited</p><script>x</script>"})
+
+    assert response.status_code == 200
+    assert response.json()["version_number"] == 1
+    assert version_count(client) == before
+    stored = client.get(f"{VERSIONS}/1").json()["content"]
+    assert stored == "<p>edited</p>"  # updated, and sanitised
+    assert stored != original
+
+
+def test_post_creates_next_version_and_leaves_others_untouched(client: TestClient) -> None:
+    """V2."""
+    original = client.get(f"{VERSIONS}/1").json()["content"]
+
+    response = client.post(VERSIONS, json={"content": "<p>v2</p>"})
+
+    assert response.status_code == 201
+    assert response.json()["version_number"] == 2
+    assert client.get(f"{VERSIONS}/1").json()["content"] == original
+
+    assert client.post(VERSIONS, json={"content": "<p>v3</p>"}).json()["version_number"] == 3
+    assert version_count(client) == 3
+
+
+def test_get_returns_the_requested_versions_content(client: TestClient) -> None:
+    """V3 — reading an older version must not return the newest one."""
+    client.post(VERSIONS, json={"content": "<p>second draft</p>"})
+
+    v1 = client.get(f"{VERSIONS}/1").json()
+    v2 = client.get(f"{VERSIONS}/2").json()
+
+    assert v1["version_number"] == 1
+    assert v2["content"] == "<p>second draft</p>"
+    assert v1["content"] != v2["content"]
+
+
+def test_list_and_detail_shapes(client: TestClient) -> None:
+    """V4."""
+    documents = client.get("/api/documents").json()
+    assert [d["id"] for d in documents] == [1, 2]
+    assert documents[0]["title"].startswith("Wireless optogenetic device")
+    assert "content" not in documents[0]
+
+    detail = client.get(f"/api/documents/{DOC}").json()
+    assert detail["title"] == documents[0]["title"]
+    assert [v["version_number"] for v in detail["versions"]] == [1]
+    assert detail["versions"][0]["updated_at"]
+    # The dropdown must not carry document bodies.
+    assert "content" not in detail["versions"][0]
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "detail"),
+    [
+        ("GET", "/api/documents/999", "Document 999 not found."),
+        ("GET", "/api/documents/999/versions/1", "Document 999 not found."),
+        ("GET", "/api/documents/1/versions/99", "Version 99 of document 1 not found."),
+        ("POST", "/api/documents/999/versions", "Document 999 not found."),
+        ("PUT", "/api/documents/999/versions/1", "Document 999 not found."),
+        ("PUT", "/api/documents/1/versions/99", "Version 99 of document 1 not found."),
+    ],
+)
+def test_missing_targets_return_distinct_404s(
+    client: TestClient, method: str, path: str, detail: str
+) -> None:
+    """V5 — the message must distinguish a missing document from a missing version."""
+    response = client.request(method, path, json={"content": "<p>x</p>"})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == detail
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("PUT", f"{VERSIONS}/1", {}),
+        ("PUT", f"{VERSIONS}/1", {"content": None}),
+        ("PUT", f"{VERSIONS}/1", {"content": 5}),
+        ("POST", VERSIONS, {}),
+        ("POST", VERSIONS, {"content": None}),
+        ("POST", VERSIONS, {"content": 5}),
+        ("GET", f"{VERSIONS}/0", None),
+        ("GET", f"{VERSIONS}/-1", None),
+        ("GET", "/api/documents/abc", None),
+        # Larger than SQLite's 64-bit INTEGER: unbounded, this reaches the driver
+        # and raises OverflowError as a 500.
+        ("GET", "/api/documents/99999999999999999999999", None),
+        ("GET", f"{VERSIONS}/99999999999999999999999", None),
+        ("PUT", f"{VERSIONS}/99999999999999999999999", {"content": "<p>x</p>"}),
+    ],
+)
+def test_invalid_bodies_and_paths_are_422(
+    client: TestClient, method: str, path: str, body: dict[str, object] | None
+) -> None:
+    """V6 — validation is left entirely to FastAPI."""
+    assert client.request(method, path, json=body).status_code == 422
+
+
+def test_empty_content_is_accepted(client: TestClient) -> None:
+    """V7 — a user may legitimately clear a draft; "" must round-trip."""
+    assert client.put(f"{VERSIONS}/1", json={"content": ""}).status_code == 200
+    assert client.get(f"{VERSIONS}/1").json()["content"] == ""
+
+    created = client.post(VERSIONS, json={"content": ""})
+    assert created.status_code == 201
+    assert created.json()["content"] == ""
+
+
+def test_oversized_content_is_413(client: TestClient) -> None:
+    """V8."""
+    cap = get_settings().max_content_bytes
+    original = client.get(f"{VERSIONS}/1").json()["content"]
+    oversized = "<p>" + "a" * (cap + 1) + "</p>"
+
+    response = client.put(f"{VERSIONS}/1", json={"content": oversized})
+
+    assert response.status_code == 413
+    assert str(cap) in response.json()["detail"]
+    assert client.get(f"{VERSIONS}/1").json()["content"] == original
+    assert version_count(client) == 1
+
+    # The cap is measured in UTF-8 bytes: this is under the character cap and
+    # over the byte cap.
+    multibyte = "é" * (cap // 2 + 1)
+    assert client.post(VERSIONS, json={"content": multibyte}).status_code == 413
+    assert version_count(client) == 1
+
+
+def test_saved_html_is_sanitised(client: TestClient) -> None:
+    """V9 — nh3 is wired into both write routes, not merely imported."""
+    dangerous = '<p onclick="steal()">keep</p><iframe src="evil"></iframe>'
+
+    put = client.put(f"{VERSIONS}/1", json={"content": dangerous})
+    post = client.post(VERSIONS, json={"content": dangerous})
+
+    assert put.json()["content"] == "<p>keep</p>"
+    assert post.json()["content"] == "<p>keep</p>"

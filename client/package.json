@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "lint": "eslint . --report-unused-disable-directives --max-warnings 0",
     "test": "vitest run --passWithNoTests",
+    "normalise-seed": "node scripts/normalise_seed.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
