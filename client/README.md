@@ -9,7 +9,8 @@ src
 ├── App.tsx # Main App Shell
 ├── Document.tsx # Document editor component
 ├── Editor.tsx # Tiptap Editor
-├── LoadingOverlay.tsx # Loading overlay component
+├── components/ # Shared presentational components (Spinner)
+├── test/ # Vitest setup
 ├── main.tsx
 ```
 

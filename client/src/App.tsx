@@ -1,7 +1,7 @@
 import Document from "./Document";
 import { useEffect, useState } from "react";
 import axios from "axios";
-import LoadingOverlay from "./LoadingOverlay";
+import Spinner from "./components/Spinner";
 import Logo from "./assets/logo.png";
 
 
@@ -49,7 +49,7 @@ function App() {
 
   return (
     <div className="flex flex-col h-full w-full">
-      {isLoading && <LoadingOverlay />}
+      {isLoading && <Spinner />}
       <header className="flex items-center justify-center top-0 w-full bg-black text-white text-center z-50 mb-[30px] h-[80px]">
         <img src={Logo} alt="Logo" style={{ height: "50px" }} />
       </header>
