@@ -242,6 +242,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     set((s) => (s.editor === editor ? { editor: null } : {}));
   },
 
+  /**
+   * One writer: `Editor.onUpdate` sets it, the two save actions and the two
+   * selection actions clear it. Nothing else may clear it — App commits a
+   * selection held back by the dirty dialog when this goes false.
+   */
   setDirty(dirty) {
     set({ dirty });
   },
