@@ -55,20 +55,30 @@ export default function Banner({
   const showFull = expanded && long;
 
   return (
-    <header className="z-10 flex min-h-[3.25rem] w-full shrink-0 flex-wrap items-center gap-x-3 gap-y-2 bg-black px-3 py-1.5 text-white sm:px-4">
+    // Three zones: the logo holds the left, the document identity and its write
+    // buttons travel together in the middle, and an empty third zone of equal
+    // weight is what makes that middle group centred on the bar rather than
+    // centred on the space the logo happens to leave over.
+    <header className="z-10 grid min-h-[3.25rem] w-full shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-3 bg-black px-3 py-1.5 text-white sm:px-4">
       <div className="flex shrink-0 items-center gap-2">
         <img src="/si_logo.svg" alt="Solve Intelligence" className="h-6 w-6" />
-        <span className="text-[0.8125rem] font-semibold tracking-tight">Patent Reviewer</span>
+        <span className="text-[0.8125rem] font-semibold tracking-tight max-lg:sr-only">
+          Patent Reviewer
+        </span>
       </div>
 
-      {documentId !== null && (
-        <>
-          <span aria-hidden="true" className="h-6 w-px shrink-0 bg-white/20 max-sm:hidden" />
-
-          <div className="flex min-w-0 flex-1 basis-40 flex-col">
-            <div className="flex min-w-0 items-center gap-2">
+      {documentId !== null ? (
+        // The max-widths are what stop a long title, not the `min-w-0`s: `truncate`
+        // sets `white-space: nowrap`, so the h1's min-content width is the whole
+        // string. `min-w-0` caps each wrapper's own minimum, not its child's, so
+        // without a ceiling that width propagates into the `auto` grid track and
+        // runs the title off-screen through the logo. `min-w-0` on the h1 lets it
+        // shrink; `max-w-*` gives it something to shrink against.
+        <div className="flex min-w-0 max-w-[42rem] items-center justify-center gap-3">
+          <div className="flex min-w-0 max-w-full flex-col items-center text-center">
+            <div className="flex min-w-0 max-w-full items-center gap-2">
               <h1
-                className={`text-[0.9375rem] font-semibold leading-5 tracking-tight ${
+                className={`min-w-0 text-[0.9375rem] font-semibold leading-5 tracking-tight ${
                   showFull ? "max-h-16 overflow-y-auto break-words" : "truncate"
                 }`}
               >
@@ -108,6 +118,8 @@ export default function Banner({
               )}
             </div>
           </div>
+
+          <span aria-hidden="true" className="h-6 w-px shrink-0 bg-white/20 max-sm:hidden" />
 
           {/* `versionNumber === null` is "nothing is open": both writes would fail
               in the store, and a live button that can only produce an error is
@@ -152,8 +164,14 @@ export default function Banner({
               </button>
             )}
           </div>
-        </>
+        </div>
+      ) : (
+        <span />
       )}
+
+      {/* Empty, and load-bearing: it balances the logo's column so the middle
+          zone is centred on the header. */}
+      <span aria-hidden="true" />
     </header>
   );
 }
