@@ -32,13 +32,18 @@ PATH_PARAMS = {"id": "document_id", "versionNumber": "version_number"}
 
 # What we expect to extract. A regex that quietly matches nothing would make this
 # whole file pass while guarding nothing, so the counts are asserted too.
-EXPECTED_ROUTES = 5  # list, get document, get version, create version, update version
+# list, create, get, rename document; list, get, create, update, rename version.
+EXPECTED_ROUTES = 9
 EXPECTED_TYPES = {
     "DocumentSummary",
     "DocumentDetail",
+    "DocumentCreate",
+    "DocumentRename",
     "VersionSummary",
     "VersionRead",
-    "VersionWrite",
+    "VersionCreate",
+    "VersionUpdate",
+    "VersionRename",
 }
 
 _CALL = re.compile(r"\b\w*[Hh]ttp\.(get|post|put|delete|patch)\(\s*[`\"']([^`\"']*)[`\"']")

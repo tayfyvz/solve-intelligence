@@ -3,10 +3,15 @@ import axios, { type AxiosResponse } from "axios";
 import type {
   AiEditRequest,
   AiEditResponse,
+  DocumentCreate,
   DocumentDetail,
-  DocumentSummary,
+  DocumentPage,
+  DocumentRename,
+  VersionCreate,
+  VersionPage,
   VersionRead,
-  VersionWrite,
+  VersionRename,
+  VersionUpdate,
 } from "./types";
 
 /**
@@ -82,20 +87,41 @@ async function request<T>(send: () => Promise<AxiosResponse<T>>): Promise<T> {
   }
 }
 
-export function listDocuments(): Promise<DocumentSummary[]> {
-  return request<DocumentSummary[]>(() => http.get("/api/documents"));
+/** Pagination is a query string, never part of the path — see `params` below. */
+export function listDocuments(limit: number, offset: number): Promise<DocumentPage> {
+  return request<DocumentPage>(() => http.get("/api/documents", { params: { limit, offset } }));
+}
+
+export function createDocument(title: string, content: string | null): Promise<DocumentDetail> {
+  const body: DocumentCreate = { title, content };
+  return request<DocumentDetail>(() => http.post("/api/documents", body));
 }
 
 export function getDocument(id: number): Promise<DocumentDetail> {
   return request<DocumentDetail>(() => http.get(`/api/documents/${id}`));
 }
 
+export function renameDocument(id: number, title: string): Promise<DocumentDetail> {
+  const body: DocumentRename = { title };
+  return request<DocumentDetail>(() => http.patch(`/api/documents/${id}`, body));
+}
+
+export function listVersions(id: number, limit: number, offset: number): Promise<VersionPage> {
+  return request<VersionPage>(() =>
+    http.get(`/api/documents/${id}/versions`, { params: { limit, offset } }),
+  );
+}
+
 export function getVersion(id: number, versionNumber: number): Promise<VersionRead> {
   return request<VersionRead>(() => http.get(`/api/documents/${id}/versions/${versionNumber}`));
 }
 
-export function createVersion(id: number, content: string): Promise<VersionRead> {
-  const body: VersionWrite = { content };
+export function createVersion(
+  id: number,
+  content: string,
+  name: string | null = null,
+): Promise<VersionRead> {
+  const body: VersionCreate = { content, name };
   return request<VersionRead>(() => http.post(`/api/documents/${id}/versions`, body));
 }
 
@@ -104,8 +130,20 @@ export function updateVersion(
   versionNumber: number,
   content: string,
 ): Promise<VersionRead> {
-  const body: VersionWrite = { content };
+  const body: VersionUpdate = { content };
   return request<VersionRead>(() => http.put(`/api/documents/${id}/versions/${versionNumber}`, body));
+}
+
+/** PATCH renames only: it never sends content, so it cannot overwrite a draft. */
+export function renameVersion(
+  id: number,
+  versionNumber: number,
+  name: string,
+): Promise<VersionRead> {
+  const body: VersionRename = { name };
+  return request<VersionRead>(() =>
+    http.patch(`/api/documents/${id}/versions/${versionNumber}`, body),
+  );
 }
 
 /**

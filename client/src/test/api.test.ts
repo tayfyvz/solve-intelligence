@@ -5,8 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // the module is imported — that is what `vi.hoisted` buys. Two stubs, told apart
 // by the timeout, so "aiEdit uses the long-timeout instance" is testable.
 const { stub, aiStub, configs } = vi.hoisted(() => ({
-  stub: { get: vi.fn(), post: vi.fn(), put: vi.fn() },
-  aiStub: { get: vi.fn(), post: vi.fn(), put: vi.fn() },
+  stub: { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn() },
+  aiStub: { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn() },
   configs: [] as { baseURL?: string; timeout?: number }[],
 }));
 
@@ -26,10 +26,14 @@ const {
   ApiError,
   BASE_URL,
   aiEdit,
+  createDocument,
   createVersion,
   getDocument,
   getVersion,
   listDocuments,
+  listVersions,
+  renameDocument,
+  renameVersion,
   toMessage,
   updateVersion,
 } = await import("../api");
@@ -100,35 +104,85 @@ describe("toMessage", () => {
 
 describe("helpers", () => {
   beforeEach(() => {
-    for (const fn of [stub.get, stub.post, stub.put, aiStub.get, aiStub.post, aiStub.put]) {
+    for (const fn of [
+      stub.get,
+      stub.post,
+      stub.put,
+      stub.patch,
+      aiStub.get,
+      aiStub.post,
+      aiStub.put,
+      aiStub.patch,
+    ]) {
       fn.mockReset();
     }
   });
 
-  // The verb and the path are the whole contract with FastAPI, and a put/post
-  // slip in updateVersion would turn every save into a new version (invariant 9).
+  // The verb and the path are the whole contract with FastAPI. Two slips this
+  // catches: a put/post in updateVersion would turn every save into a new
+  // version (invariant 9), and a rename sent as PUT would wipe the content.
   it("calls the documented route and verb for each helper", async () => {
     stub.get.mockResolvedValue({ data: null });
     stub.post.mockResolvedValue({ data: null });
     stub.put.mockResolvedValue({ data: null });
+    stub.patch.mockResolvedValue({ data: null });
 
-    await listDocuments();
-    expect(stub.get).toHaveBeenCalledWith("/api/documents");
+    // Pagination goes in `params`, never interpolated into the path.
+    await listDocuments(20, 40);
+    expect(stub.get).toHaveBeenCalledWith("/api/documents", { params: { limit: 20, offset: 40 } });
+
+    await createDocument("Widget", null);
+    expect(stub.post).toHaveBeenCalledWith("/api/documents", { title: "Widget", content: null });
 
     await getDocument(7);
     expect(stub.get).toHaveBeenCalledWith("/api/documents/7");
+
+    await renameDocument(7, "Widget II");
+    expect(stub.patch).toHaveBeenCalledWith("/api/documents/7", { title: "Widget II" });
+
+    await listVersions(7, 5, 0);
+    expect(stub.get).toHaveBeenCalledWith("/api/documents/7/versions", {
+      params: { limit: 5, offset: 0 },
+    });
 
     await getVersion(7, 3);
     expect(stub.get).toHaveBeenCalledWith("/api/documents/7/versions/3");
 
     await createVersion(7, "<p>new</p>");
-    expect(stub.post).toHaveBeenCalledWith("/api/documents/7/versions", { content: "<p>new</p>" });
+    expect(stub.post).toHaveBeenCalledWith("/api/documents/7/versions", {
+      content: "<p>new</p>",
+      name: null, // null, not omitted: the server names it "Version {n}"
+    });
 
     await updateVersion(7, 3, "<p>edited</p>");
     expect(stub.put).toHaveBeenCalledWith("/api/documents/7/versions/3", {
       content: "<p>edited</p>",
     });
-    expect(stub.post).toHaveBeenCalledTimes(1); // update never creates
+
+    // Renames carry a name and nothing else — no content can ride along.
+    await renameVersion(7, 3, "Filed draft");
+    expect(stub.patch).toHaveBeenCalledWith("/api/documents/7/versions/3", { name: "Filed draft" });
+
+    expect(stub.post).toHaveBeenCalledTimes(2); // create document, create version
+  });
+
+  // The 409 sentence is the whole point of the naming rules: the server writes a
+  // readable one and every layer must pass it through untouched.
+  it("passes a 409 conflict sentence through verbatim", async () => {
+    stub.post.mockRejectedValue(
+      axiosError(undefined, {
+        status: 409,
+        data: { detail: 'A patent called "Widget" already exists.' },
+      }),
+    );
+
+    const error = await createDocument("Widget", null).then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+    expect((error as InstanceType<typeof ApiError>).status).toBe(409);
+    expect((error as Error).message).toBe('A patent called "Widget" already exists.');
   });
 
   // A property, not the exact list: the point is that *some* instance outwaits

@@ -48,6 +48,10 @@ def test_concurrent_create_version_never_500s(file_client: TestClient) -> None:
     assert set(codes) <= {201, 409}, codes
 
     # Whatever succeeded, the stored numbers must be 1..n: no duplicates, no gaps.
-    stored = [v["version_number"] for v in file_client.get("/api/documents/1").json()["versions"]]
+    listed = file_client.get(f"{VERSIONS}?limit=100").json()["items"]
+    stored = sorted(v["version_number"] for v in listed)
     assert stored == list(range(1, len(stored) + 1))
     assert len(stored) == 1 + codes.count(201)
+    # And every auto-generated name is distinct: a name collision must never be
+    # what makes a concurrent save fail.
+    assert len({v["name"] for v in listed}) == len(listed)

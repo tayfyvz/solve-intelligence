@@ -3,6 +3,7 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 
 import { useDocumentStore } from "../store";
+import Toolbar from "./Toolbar";
 
 // Module scope: a fresh array on every render churns the editor's extension setup.
 const extensions = [StarterKit];
@@ -39,6 +40,11 @@ export default function Editor({ content, className }: EditorProps) {
     extensions,
     content,
     immediatelyRender: true, // client-only app; also narrows the type to Editor
+    // Legacy default is `true`: React re-renders this component on *every*
+    // transaction, i.e. every keystroke. The toolbar gets its updates from
+    // `useEditorState`, which re-renders only when a button's own state changes, so
+    // the blanket re-render buys nothing and costs a render per typed character.
+    shouldRerenderOnTransaction: false,
     onCreate: ({ editor }) => setEditor(editor),
     // The only writer of the dirty flag. The AI path applies its HTML with
     // setContent(html, true), so it flows through here too and ChatPanel never
@@ -60,7 +66,11 @@ export default function Editor({ content, className }: EditorProps) {
   useEffect(() => () => clearEditor(editor), [editor, clearEditor]);
 
   return (
+    // The toolbar lives inside the scroll container and is `sticky`, so it stays
+    // reachable while reading a long claim set without the parent having to know
+    // anything about it — `className` is still exactly the scrolling pane it was.
     <div className={className}>
+      <Toolbar editor={editor} />
       <EditorContent editor={editor} />
     </div>
   );

@@ -14,7 +14,7 @@ VERSIONS = f"/api/documents/{DOC}/versions"
 
 
 def version_count(client: TestClient, document_id: int = DOC) -> int:
-    return len(client.get(f"/api/documents/{document_id}").json()["versions"])
+    return client.get(f"/api/documents/{document_id}").json()["version_count"]
 
 
 def test_put_updates_in_place_and_creates_no_version(client: TestClient) -> None:
@@ -102,23 +102,51 @@ def test_get_returns_the_requested_versions_content(client: TestClient) -> None:
 
 def test_list_and_detail_shapes(client: TestClient) -> None:
     """V4."""
-    documents = client.get("/api/documents").json()
-    assert [d["id"] for d in documents] == [1, 2]
-    assert documents[0]["title"].startswith("Wireless optogenetic device")
-    assert "content" not in documents[0]
+    page = client.get("/api/documents").json()
+    assert page["total"] == 2
+    # Ordered by title, so the Microfluidic patent (id 2) sorts first.
+    assert [d["id"] for d in page["items"]] == [2, 1]
+    assert page["items"][1]["title"].startswith("Wireless optogenetic device")
+    assert "content" not in page["items"][0]
 
     detail = client.get(f"/api/documents/{DOC}").json()
-    assert detail["title"] == documents[0]["title"]
-    assert [v["version_number"] for v in detail["versions"]] == [1]
-    assert detail["versions"][0]["updated_at"]
+    assert detail["title"] == page["items"][1]["title"]
+    assert detail["version_count"] == 1
+    assert detail["latest_version_number"] == 1
+    assert detail["updated_at"]
+
+    versions = client.get(VERSIONS).json()
+    assert [v["version_number"] for v in versions["items"]] == [1]
+    assert versions["items"][0]["name"] == "Version 1"
+    assert versions["items"][0]["updated_at"]
     # The dropdown must not carry document bodies.
-    assert "content" not in detail["versions"][0]
+    assert "content" not in versions["items"][0]
+
+
+def test_document_updated_at_tracks_its_versions(client: TestClient) -> None:
+    """V4b — "last touched" is the newest version's save time, computed in SQL.
+
+    Backdated rather than slept through: SQLite's CURRENT_TIMESTAMP has
+    one-second resolution.
+    """
+    stale = datetime(2020, 1, 1)
+    with client.app.state.session_factory() as db:
+        db.execute(update(DocumentVersion).values(updated_at=stale))
+        db.commit()
+    assert client.get(f"/api/documents/{DOC}").json()["updated_at"].startswith("2020-01-01")
+
+    client.put(f"{VERSIONS}/1", json={"content": "<p>touched</p>"})
+
+    assert datetime.fromisoformat(client.get(f"/api/documents/{DOC}").json()["updated_at"]) > stale
+    # Only this patent was touched.
+    assert client.get("/api/documents/2").json()["updated_at"].startswith("2020-01-01")
 
 
 @pytest.mark.parametrize(
     ("method", "path", "detail"),
     [
         ("GET", "/api/documents/999", "Document 999 not found."),
+        ("GET", "/api/documents/999/versions", "Document 999 not found."),
         ("GET", "/api/documents/999/versions/1", "Document 999 not found."),
         ("GET", "/api/documents/1/versions/99", "Version 99 of document 1 not found."),
         ("POST", "/api/documents/999/versions", "Document 999 not found."),
