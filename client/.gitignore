@@ -26,3 +26,6 @@ dist-ssr
 # Vite dependencies
 .vite/
 .vite/deps/
+
+# TypeScript incremental caches (emitted next to tsconfig*.json)
+*.tsbuildinfo
