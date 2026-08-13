@@ -22,8 +22,9 @@ FIXTURE = Path(__file__).parents[2] / "client/src/test/seed.fixture.ts"
     [(0, "SEED_1"), (1, "SEED_2")],
 )
 def test_seed_matches_client_fixture(index: int, name: str) -> None:
-    if not FIXTURE.exists():
-        pytest.skip("client fixture not present (client/ not installed)")
+    # An assert, not a skip: the fixture is committed, so its absence is the drift
+    # this test exists to catch.
+    assert FIXTURE.exists(), f"{FIXTURE} is missing — it is committed and must not be deleted."
 
     match = re.search(rf'^export const {name} = (".*");$', FIXTURE.read_text(), re.M)
     assert match is not None, f"{name} not found in {FIXTURE}"

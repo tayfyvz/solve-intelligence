@@ -4,18 +4,35 @@ router turns that into a 404."""
 from collections.abc import Sequence
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session, selectinload
 
 from app.data import SEED_DOCUMENTS
 from app.models import Document, DocumentVersion
 
 
+class VersionNumberConflict(Exception):
+    """Concurrent saves kept claiming the same version number. The router turns
+    this into a 409 — this layer raises no HTTPException."""
+
+
+# Neither document response carries version content, but `lazy="selectin"` would
+# still fetch every draft's full body to build the dropdown. Deferred here rather
+# than on the column itself: a column-level defer also leaves `content` unloaded
+# on the PUT path, where assigning to an unloaded attribute marks it dirty
+# unconditionally and quietly changes what `update_version` below is doing.
+_WITHOUT_CONTENT = selectinload(Document.versions).defer(DocumentVersion.content)
+
+# One retry per competing writer we expect in practice (two or three browser tabs).
+CREATE_VERSION_ATTEMPTS = 3
+
+
 def list_documents(db: Session) -> Sequence[Document]:
-    return db.scalars(select(Document).order_by(Document.id)).all()
+    return db.scalars(select(Document).options(_WITHOUT_CONTENT).order_by(Document.id)).all()
 
 
 def get_document(db: Session, document_id: int) -> Document | None:
-    return db.get(Document, document_id)
+    return db.get(Document, document_id, options=[_WITHOUT_CONTENT])
 
 
 def get_version(db: Session, document_id: int, version_number: int) -> DocumentVersion | None:
@@ -37,15 +54,29 @@ def max_version_number(db: Session, document_id: int) -> int:
 
 
 def create_version(db: Session, document: Document, content: str) -> DocumentVersion:
-    version = DocumentVersion(
-        document_id=document.id,
-        version_number=max_version_number(db, document.id) + 1,
-        content=content,
-    )
-    db.add(version)
-    db.commit()
-    db.refresh(version)
-    return version
+    """Reading MAX+1 and then inserting is a race: two tabs saving at the same
+    moment compute the same number and the unique constraint rejects one of them.
+    Retrying recomputes MAX+1 against the row the winner just committed, so the
+    loser gets the next number instead of an unhandled IntegrityError.
+
+    Raises VersionNumberConflict if every attempt loses.
+    """
+    for _ in range(CREATE_VERSION_ATTEMPTS):
+        version = DocumentVersion(
+            document_id=document.id,
+            version_number=max_version_number(db, document.id) + 1,
+            content=content,
+        )
+        db.add(version)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            continue
+        db.refresh(version)
+        return version
+
+    raise VersionNumberConflict
 
 
 def update_version(db: Session, version: DocumentVersion, content: str) -> DocumentVersion:

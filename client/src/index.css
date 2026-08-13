@@ -1,14 +1,27 @@
 @import "tailwindcss";
 
+/* Inter, self-hosted. The previous `font-family: "Inter"` named a font nothing ever
+   loaded, so every user fell through to system sans. @fontsource ships the woff2 files
+   in node_modules, so there is no CDN request and the app still looks right offline
+   and in Docker. Italic is included because claim prose actually uses <em>. */
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/inter/wght-italic.css";
+
 :root {
-  font-family: "Inter", sans-serif;
+  font-family: "Inter Variable", system-ui, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  --text-color: #213547;
-  --background-color: #f7f7f7;
-  --button-bg-color: #646cff;
-  --button-text-color: #ffffff;
-  --hover-button-bg-color: #535bf2;
+  /* Light only, deliberately. It also stops macOS rendering the native <select>
+     white-on-white when the OS is in dark mode. */
+  color-scheme: light;
+
+  --ink: #0f172a;
+  --ink-muted: #64748b;
+  --text-color: #1e293b;
+  --background-color: #eef1f5; /* chrome behind the panes */
+  --surface-color: #ffffff;
+  --border-color: #e2e8f0;
+  --focus-color: #0284c7;
 }
 
 /* stretch/flex-start, not centre: the app is a full-height three-pane layout that fills
@@ -25,33 +38,89 @@ div#root {
   width: 100%;
   background-color: var(--background-color);
   color: var(--text-color);
+  -webkit-font-smoothing: antialiased;
 }
 
 /* Everything below lives in @layer components, which `@import "tailwindcss"` orders *before*
    the utilities layer. Unlayered rules beat every layered rule regardless of specificity, so
    leaving these bare would make `className="btn px-3"` silently ignore `px-3`. */
 @layer components {
-  h1 {
-    margin: 0 0 20px 0;
-    color: var(--text-color);
+  /* One focus ring for the whole app. The UA outline sits square against rounded
+     corners; `border-radius: inherit` makes this one follow the control's shape. */
+  .focus-ring:focus-visible {
+    outline: 2px solid var(--focus-color);
+    outline-offset: 2px;
+    border-radius: inherit;
   }
 
-  /* Scoped to .btn, never bare `button`: an element selector styles every button in the app —
-     dialog buttons, the file chip's ×, the chat send button — whether or not it wants it. */
+  /* Two button shapes, because six buttons repeating the same ten utilities is
+     harder to keep consistent than one rule. Ink primary, to sit with the black header. */
   .btn {
-    margin: 10px;
-    padding: 10px 20px;
-    min-width: 100px;
-    background-color: var(--button-bg-color);
-    color: var(--button-text-color);
-    border: none;
-    border-radius: 5px;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    height: 2.25rem;
+    padding: 0 0.875rem;
+    border: 1px solid transparent;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 500;
     cursor: pointer;
-    transition: background-color 0.3s ease;
+    transition:
+      background-color 150ms ease,
+      border-color 150ms ease,
+      color 150ms ease;
   }
 
-  .btn:hover {
-    background-color: var(--hover-button-bg-color);
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background-color: var(--ink);
+    color: #ffffff;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background-color: #1e293b;
+  }
+
+  .btn-secondary {
+    background-color: var(--surface-color);
+    color: var(--text-color);
+    border-color: #cbd5e1;
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    background-color: #f1f5f9;
+  }
+
+  /* The document surface is the product, so the editor is a sheet of paper on a
+     tinted desk rather than text pinned to the left edge of a pane. */
+  .editor {
+    max-width: 44rem;
+    margin: 1.5rem auto 2.5rem;
+    padding: 2.5rem 1.75rem;
+    min-height: 20rem;
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: 0.75rem;
+    box-shadow:
+      0 1px 2px rgb(15 23 42 / 0.04),
+      0 12px 28px -16px rgb(15 23 42 / 0.25);
+    /* ~44rem at 1.0625rem holds roughly 70 characters a line. Claim text at full
+       pane width runs past 100, which is unreadable for legal prose. */
+    font-size: 1.0625rem;
+    line-height: 1.7;
+    color: var(--text-color);
+    text-wrap: pretty;
+  }
+
+  @media (min-width: 640px) {
+    .editor {
+      padding: 3.5rem 3.5rem;
+    }
   }
 
   /* Document typography. There is no @tailwindcss/typography plugin here, so `prose` does not
@@ -60,32 +129,82 @@ div#root {
   .editor h1 {
     font-size: 1.5rem;
     font-weight: 600;
-    margin: 1.5rem 0 0.75rem;
+    letter-spacing: -0.015em;
+    line-height: 1.25;
+    margin: 0 0 1.25rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .editor h1:not(:first-child) {
+    margin-top: 2.25rem;
+  }
+
+  .editor h2 {
+    font-size: 1.2rem;
+    font-weight: 600;
+    margin: 2rem 0 0.75rem;
   }
 
   .editor p {
-    margin: 0 0 0.75rem;
+    margin: 0 0 1rem;
+  }
+
+  .editor p:last-child {
+    margin-bottom: 0;
   }
 
   .editor ol {
     list-style: decimal;
     padding-left: 1.5rem;
-    margin: 0 0 0.75rem;
+    margin: 0 0 1rem;
   }
 
   .editor ul {
     list-style: disc;
     padding-left: 1.5rem;
-    margin: 0 0 0.75rem;
+    margin: 0 0 1rem;
+  }
+
+  /* The dialog used to pop into existence at full opacity. */
+  .dialog-backdrop {
+    animation: fade-in 150ms ease-out;
+  }
+
+  .dialog-panel {
+    animation: dialog-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
   }
 }
 
-/* Additional media query for light mode if needed */
-@media (prefers-color-scheme: light) {
-  :root {
-    --text-color: #213547;
-    --background-color: #ffffff;
-    --button-bg-color: #747bff;
-    --hover-button-bg-color: #646cff;
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The skeleton pulse and the button spinners are decorative; nothing here conveys
+   information by motion alone, so honouring the OS setting costs nothing. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

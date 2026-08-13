@@ -1,9 +1,13 @@
 """Task 1: versioning routes."""
 
+from datetime import datetime
+
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import update
 
 from app.config import get_settings
+from app.models import DocumentVersion
 
 DOC = 1
 VERSIONS = f"/api/documents/{DOC}/versions"
@@ -26,6 +30,48 @@ def test_put_updates_in_place_and_creates_no_version(client: TestClient) -> None
     stored = client.get(f"{VERSIONS}/1").json()["content"]
     assert stored == "<p>edited</p>"  # updated, and sanitised
     assert stored != original
+
+
+def test_put_bumps_updated_at_even_when_content_is_unchanged(client: TestClient) -> None:
+    """V1b — pressing Save without typing is still a save.
+
+    Unchanged content leaves the attribute clean, so SQLAlchemy would emit no
+    UPDATE, `onupdate` would never fire, and "last saved" in the dropdown would
+    silently stay stale. `updated_at` is backdated rather than slept through:
+    SQLite's CURRENT_TIMESTAMP has one-second resolution.
+    """
+    unchanged = client.get(f"{VERSIONS}/1").json()["content"]
+    before = version_count(client)
+    stale = datetime(2020, 1, 1)
+    with client.app.state.session_factory() as db:
+        db.execute(
+            update(DocumentVersion)
+            .where(DocumentVersion.document_id == DOC, DocumentVersion.version_number == 1)
+            .values(updated_at=stale)
+        )
+        db.commit()
+    assert client.get(f"{VERSIONS}/1").json()["updated_at"].startswith("2020-01-01")
+
+    response = client.put(f"{VERSIONS}/1", json={"content": unchanged})
+
+    assert response.status_code == 200
+    assert datetime.fromisoformat(response.json()["updated_at"]) > stale
+    assert client.get(f"{VERSIONS}/1").json()["content"] == unchanged
+    assert version_count(client) == before  # invariant: PUT never creates a version
+
+
+def test_put_on_one_document_cannot_touch_another(client: TestClient) -> None:
+    """V1c — the version lookup filters on document_id as well as the number.
+
+    Both seed patents have a version 1, so a lookup keyed on the number alone
+    would happily overwrite the wrong patent.
+    """
+    other = client.get("/api/documents/2/versions/1").json()["content"]
+
+    assert client.put(f"{VERSIONS}/1", json={"content": "<p>only doc 1</p>"}).status_code == 200
+
+    assert client.get("/api/documents/2/versions/1").json()["content"] == other
+    assert client.get(f"{VERSIONS}/1").json()["content"] == "<p>only doc 1</p>"
 
 
 def test_post_creates_next_version_and_leaves_others_untouched(client: TestClient) -> None:

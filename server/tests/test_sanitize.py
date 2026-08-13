@@ -6,7 +6,6 @@ Stripping a tag StarterKit renders destroys the user's content on save, so the
 
 import pytest
 
-from app.data import SEED_DOCUMENTS
 from app.sanitize import sanitize_html
 
 STRIPPED = [
@@ -20,6 +19,9 @@ STRIPPED = [
     ("<!-- comment --><p>a</p>", "<p>a</p>"),
 ]
 
+# One behaviour, so one test: parametrising these inflates a single guarantee
+# into a dozen reported cases. The seed patents are not repeated here — they are
+# covered by test_seed.py and the client's seedRoundTrip.test.ts.
 PRESERVED = [
     "",
     "<p><strong>1. A</strong></p>",
@@ -33,13 +35,25 @@ PRESERVED = [
     "<hr>",
     "<p><em>a</em><s>b</s></p>",
     "<p>a &amp; b &lt;c&gt;</p>",
-    *(seed.content for seed in SEED_DOCUMENTS),
 ]
 
 
-@pytest.mark.parametrize(
-    ("html", "expected"),
-    [*STRIPPED, *((html, html) for html in PRESERVED)],
-)
-def test_sanitiser_round_trip(html: str, expected: str) -> None:
+@pytest.mark.parametrize(("html", "expected"), STRIPPED)
+def test_dangerous_html_is_stripped(html: str, expected: str) -> None:
     assert sanitize_html(html) == expected
+
+
+def test_editor_html_survives_unchanged() -> None:
+    for html in PRESERVED:
+        assert sanitize_html(html) == html
+
+
+def test_title_and_lang_survive_despite_the_attribute_allowlist() -> None:
+    """Pins nh3's actual behaviour, not the behaviour the allowlist implies.
+
+    `attributes=` does not fully replace nh3's defaults: `title` and `lang` are
+    permitted on every allowed tag regardless. Both are inert, so this documents
+    the surprise rather than working around it — and fails loudly if a future nh3
+    starts letting something less inert through.
+    """
+    assert sanitize_html('<p title="t" lang="en" id="x">a</p>') == '<p title="t" lang="en">a</p>'

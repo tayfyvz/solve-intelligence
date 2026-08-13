@@ -9,7 +9,7 @@ import {
   toMessage,
   updateVersion,
 } from "./api";
-import type { DocumentSummary, VersionSummary } from "./types";
+import type { DocumentDetail, DocumentSummary, VersionRead, VersionSummary } from "./types";
 
 /**
  * Shared state only: something is here because two or more components need it.
@@ -32,6 +32,8 @@ interface DocumentState {
   dirty: boolean;
   loading: boolean;
   saving: boolean;
+  /** Which write is in flight, so only the button that started it spins. */
+  pendingAction: "save" | "saveAsNew" | null;
   error: string | null;
 
   loadDocuments(): Promise<void>;
@@ -69,6 +71,26 @@ function captureRequest(): () => boolean {
   return () => mine === token;
 }
 
+/**
+ * `api.ts` casts the response body to its declared type; a proxy, a stale deploy
+ * or a 200 from the wrong route can still hand back another shape. Without these
+ * checks a missing `content` would set `content: null` and leave the user staring
+ * at a blank pane with no loading state and no error — a silent failure.
+ */
+function checkedContent(version: VersionRead): string {
+  if (typeof version.content !== "string") {
+    throw new Error("The server returned a version without any content.");
+  }
+  return version.content;
+}
+
+function checkedVersions(detail: DocumentDetail): VersionSummary[] {
+  if (!Array.isArray(detail.versions)) {
+    throw new Error("The server returned a document without a version list.");
+  }
+  return detail.versions;
+}
+
 const initialState = {
   documents: [] as DocumentSummary[],
   documentId: null as number | null,
@@ -80,6 +102,7 @@ const initialState = {
   dirty: false,
   loading: false,
   saving: false,
+  pendingAction: null as "save" | "saveAsNew" | null,
   error: null as string | null,
 };
 
@@ -92,6 +115,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     try {
       const documents = await listDocuments();
       if (!isCurrent()) return;
+      // A non-array here would crash the render on `.map` — a white screen with
+      // no message, which is worse than any error banner.
+      if (!Array.isArray(documents)) {
+        throw new Error("The server returned an unreadable list of documents.");
+      }
       set({ documents, loading: false });
       // Without this the first paint is an empty editor column.
       if (documents.length && get().documentId === null) {
@@ -111,31 +139,33 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     try {
       const detail = await getDocument(id);
       if (!isCurrent()) return;
-      if (!detail.versions.length) {
+      const summaries = checkedVersions(detail);
+      if (!summaries.length) {
         // Cannot happen against this server, but asking for version 0 would
         // surface as "Version 0 was not found", which reads as a bug.
-        set({ loading: false, error: `"${detail.title}" has no saved versions.` });
+        set({ loading: false, dirty: false, error: `"${detail.title}" has no saved versions.` });
         return;
       }
       // The highest version number is the user's newest draft.
-      const latest = detail.versions.reduce(
-        (highest, v) => Math.max(highest, v.version_number),
-        0,
-      );
+      const latest = summaries.reduce((highest, v) => Math.max(highest, v.version_number), 0);
       const version = await getVersion(id, latest);
       if (!isCurrent()) return;
       set({
         documentId: detail.id,
         title: detail.title,
-        versions: detail.versions,
+        versions: summaries,
         versionNumber: version.version_number,
-        content: version.content,
+        content: checkedContent(version),
         dirty: false,
         loading: false,
       });
     } catch (error) {
       if (!isCurrent()) return;
-      set({ loading: false, error: toMessage(error) });
+      // `dirty` clears on the failure path too: the loading branch already
+      // unmounted the editor, so it remounts holding the last *saved* content and
+      // the user's edits are gone. Still inside the one-writer rule — this is a
+      // selection action.
+      set({ loading: false, dirty: false, error: toMessage(error) });
     }
   },
 
@@ -149,13 +179,15 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       if (!isCurrent()) return;
       set({
         versionNumber: version.version_number,
-        content: version.content,
+        content: checkedContent(version),
         dirty: false,
         loading: false,
       });
     } catch (error) {
       if (!isCurrent()) return;
-      set({ loading: false, error: toMessage(error) });
+      // See `selectDocument`: a failed switch still cost the user their edits,
+      // so the bar must not keep claiming they are unsaved.
+      set({ loading: false, dirty: false, error: toMessage(error) });
     }
   },
 
@@ -166,7 +198,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       return false;
     }
     const isCurrent = captureRequest();
-    set({ saving: true, error: null });
+    set({ saving: true, pendingAction: "save", error: null });
     try {
       // Updates version `n` in place — it must never create a version.
       const saved = await updateVersion(documentId, versionNumber, editor.getHTML());
@@ -192,7 +224,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       // to clear it, and a stuck `saving` disables Save for the rest of the
       // session. Last writer wins if two saves somehow overlap; the UI only
       // allows one, and re-enabling early beats locking the user out.
-      set({ saving: false });
+      set({ saving: false, pendingAction: null });
     }
   },
 
@@ -203,20 +235,27 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       return false;
     }
     const isCurrent = captureRequest();
-    set({ saving: true, error: null });
+    set({ saving: true, pendingAction: "saveAsNew", error: null });
     try {
       const created = await createVersion(documentId, editor.getHTML());
       if (!isCurrent()) return false;
+      const summary = {
+        version_number: created.version_number,
+        updated_at: created.updated_at,
+      };
       set({
+        // Replace-or-append, not a blind append: if the list we hold already has
+        // that number (a reload landed in between, or the server reused it),
+        // appending gives React two options with the same key.
         versions: [
-          ...get().versions,
-          { version_number: created.version_number, updated_at: created.updated_at },
-        ],
+          ...get().versions.filter((v) => v.version_number !== summary.version_number),
+          summary,
+        ].sort((a, b) => a.version_number - b.version_number),
         versionNumber: created.version_number,
         // The server's sanitised echo is the truth after nh3 ran; moving
         // versionNumber changes the remount key, which rebuilds the editor
         // from exactly this content.
-        content: created.content,
+        content: checkedContent(created),
         dirty: false,
       });
       return true;
@@ -225,7 +264,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       set({ error: toMessage(error) });
       return false;
     } finally {
-      set({ saving: false }); // see `save` — one clear for every exit path
+      // see `save` — one clear for every exit path
+      set({ saving: false, pendingAction: null });
     }
   },
 

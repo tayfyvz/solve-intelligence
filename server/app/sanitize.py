@@ -36,7 +36,10 @@ STRIP_CONTENT_TAGS = frozenset({"script", "style"})
 
 
 def sanitize_html(html: str) -> str:
-    # nh3.clean *replaces* its defaults when tags= is given; it does not merge.
+    # `tags=` replaces nh3's default tag list, but `attributes=` does not fully
+    # replace its attribute handling: `title` and `lang` are permitted on every
+    # allowed tag no matter what is passed here. Both are inert, so this is
+    # documented rather than fought — see test_sanitize.py.
     return nh3.clean(
         html,
         tags=set(ALLOWED_TAGS),

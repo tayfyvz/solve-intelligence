@@ -46,7 +46,9 @@ export default function Editor({ content, className }: EditorProps) {
     onUpdate: () => setDirty(true),
     editorProps: {
       attributes: {
-        class: "editor outline-none min-h-full px-8 py-6",
+        // Measure, paper and typography all live on `.editor` in index.css — the
+        // padding is not a utility here because the sheet needs it responsively.
+        class: "editor outline-none",
         "aria-label": "Patent document",
       },
     },

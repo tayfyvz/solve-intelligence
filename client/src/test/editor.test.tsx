@@ -62,19 +62,13 @@ describe("Editor", () => {
     expect(useDocumentStore.getState().editor).toBeNull();
   });
 
-  it("does not mark a freshly mounted document dirty", async () => {
-    render(<Editor content="<p>Hello</p>" />);
-    await mountedEditor();
-
-    // TipTap emits no `update` for the initial parse, so `dirty: false` beside
-    // freshly loaded content is coherent by construction. Asserted anyway: the
-    // dirty dialog is built on it.
-    expect(useDocumentStore.getState().dirty).toBe(false);
-  });
-
+  // The dirty flag has exactly one writer, and this is it. (The mount half —
+  // "a freshly parsed document is not dirty" — is asserted here too: it holds
+  // before the edit, and TipTap emits no `update` for the initial parse.)
   it("marks the document dirty when the editor content changes", async () => {
     render(<Editor content="<p>Hello</p>" />);
     const editor = await mountedEditor();
+    expect(useDocumentStore.getState().dirty).toBe(false);
 
     editor.commands.setContent("<p>Hello there</p>", true);
 

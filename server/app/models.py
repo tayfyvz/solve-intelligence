@@ -30,8 +30,10 @@ class DocumentVersion(Base):
     immutable snapshot — that is the only model satisfying README task 1.3."""
 
     __tablename__ = "document_versions"
-    # One row per (document, version): makes a concurrent POST race benign —
-    # worst case an IntegrityError, never a duplicate version number.
+    # One row per (document, version). This is the last line of defence, not the
+    # fix: it turns a concurrent POST into an IntegrityError rather than a
+    # duplicate number, and `crud.create_version` is what retries and, failing
+    # that, reports a 409.
     __table_args__ = (
         UniqueConstraint("document_id", "version_number", name="uq_document_version_number"),
     )

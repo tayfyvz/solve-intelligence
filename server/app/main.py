@@ -1,8 +1,10 @@
-from collections.abc import AsyncIterator
+import logging
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session, sessionmaker
 
 # Imported for its side effect: importing the models registers the tables on
@@ -12,6 +14,8 @@ from app.config import get_settings
 from app.crud import seed_if_empty
 from app.db import SessionLocal, init_db
 from app.routers import documents
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -26,9 +30,29 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
+    logging.basicConfig(level=logging.INFO)
     settings = get_settings()
     application = FastAPI(title="Patent Editor API", lifespan=lifespan)
     application.state.session_factory = session_factory or SessionLocal
+
+    # Registered BEFORE CORSMiddleware so that CORS ends up wrapping it: Starlette
+    # applies the most recently added middleware outermost. This is deliberate.
+    # FastAPI's built-in 500 handling sits above *all* user middleware, so an
+    # unhandled exception produces a response with no Access-Control-Allow-Origin
+    # header; the browser then reports a CORS failure and the UI says "cannot
+    # reach the server" while the server is fine. Catching it here keeps the
+    # response inside CORS, so the client gets a sentence it can render.
+    @application.middleware("http")
+    async def handle_unexpected_errors(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        try:
+            return await call_next(request)
+        except Exception:
+            logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+            return JSONResponse(
+                status_code=500, content={"detail": "Something went wrong on the server."}
+            )
 
     # Explicit origins, not ["*"]: "*" with allow_credentials=True is invalid per
     # the CORS spec and browsers reject the pairing outright.

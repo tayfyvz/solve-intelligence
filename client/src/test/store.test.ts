@@ -147,15 +147,51 @@ describe("selection ordering", () => {
     expect(store().content).toBe("<p>doc 1 v2</p>");
   });
 
-  // S6
-  it("a fresh selection clears the dirty flag", async () => {
-    getDocument.mockResolvedValue(detail(1));
-    getVersion.mockResolvedValue(version(1, 1));
-    useDocumentStore.setState({ dirty: true });
+  // The failure path of both selection actions. `loading` already unmounted the
+  // editor, so it remounts on the last *saved* content — the edits are genuinely
+  // gone. Leaving `dirty` set made the bar claim "Unsaved changes" over content
+  // that had just been discarded, and re-opened the dialog on the next switch.
+  // Repro: backend down -> type -> switch version -> Discard.
+  it("a failed switch clears dirty, because the edits are already gone", async () => {
+    getVersion.mockRejectedValue(new Error("Cannot reach the server."));
+    useDocumentStore.setState({ documentId: 1, versionNumber: 1, dirty: true });
 
-    await store().selectDocument(1);
+    await store().selectVersion(2);
 
     expect(store().dirty).toBe(false);
+    expect(store().error).toBe("Cannot reach the server.");
+    expect(store().loading).toBe(false);
+
+    // Same reasoning, other selection action.
+    getDocument.mockRejectedValue(new Error("Cannot reach the server."));
+    useDocumentStore.setState({ dirty: true });
+
+    await store().selectDocument(2);
+
+    expect(store().dirty).toBe(false);
+    expect(store().error).toBe("Cannot reach the server.");
+  });
+
+  // `api.ts` casts the body to its declared type, so a proxy, a stale deploy or a
+  // 200 from the wrong route reaches the store as the wrong shape. Unguarded, a
+  // missing `content` sets `content: null`: no editor, no error, no loading state
+  // — a blank pane and nothing to read.
+  it("a malformed version or document body becomes a readable error", async () => {
+    getVersion.mockResolvedValue({ ...version(1, 1), content: undefined } as unknown as VersionRead);
+    useDocumentStore.setState({ documentId: 1, versionNumber: 1 });
+
+    await store().selectVersion(2);
+
+    expect(store().error).toBe("The server returned a version without any content.");
+    expect(store().content).toBeNull();
+    expect(store().loading).toBe(false);
+
+    getDocument.mockResolvedValue({ id: 2, title: "Patent 2" } as unknown as DocumentDetail);
+
+    await store().selectDocument(2);
+
+    expect(store().error).toBe("The server returned a document without a version list.");
+    expect(store().loading).toBe(false);
   });
 
   it("reports a document with no versions instead of asking for version 0", async () => {
@@ -326,6 +362,63 @@ describe("saving", () => {
     expect(store().error).toBe("Version 2 of document 1 was not found.");
     expect(store().dirty).toBe(true);
     expect(store().saving).toBe(false);
+    expect(store().pendingAction).toBeNull();
+  });
+
+  // `pendingAction` is what makes only the pressed button spin. `saving` alone
+  // cannot do it — it is true for both.
+  it("pendingAction names the write in flight and clears when it resolves", async () => {
+    let finish: ((v: VersionRead) => void) | undefined;
+    updateVersion.mockImplementation(
+      () =>
+        new Promise<VersionRead>((resolve) => {
+          finish = resolve;
+        }),
+    );
+
+    const saving = store().save();
+    expect(store().pendingAction).toBe("save");
+    expect(store().saving).toBe(true);
+
+    finish!(version(1, 2));
+    await saving;
+
+    expect(store().pendingAction).toBeNull();
+    expect(store().saving).toBe(false);
+  });
+
+  // The other write, and the exit path that is easy to forget: a stuck spinner on
+  // a failed create would sit there for the rest of the session.
+  it("pendingAction distinguishes saveAsNew and clears when it fails", async () => {
+    createVersion.mockRejectedValue(new Error("Could not create a version."));
+
+    const saving = store().saveAsNewVersion();
+    expect(store().pendingAction).toBe("saveAsNew");
+
+    await expect(saving).resolves.toBe(false);
+
+    expect(store().pendingAction).toBeNull();
+    expect(store().saving).toBe(false);
+    expect(store().error).toBe("Could not create a version.");
+    expect(store().dirty).toBe(true);
+  });
+});
+
+describe("saving with nothing open", () => {
+  // Both writes early-return. The UI disables the buttons, but the store is the
+  // thing the AI panel and any future caller will reach through — it has to
+  // answer with a sentence rather than a silent `false`.
+  it("both save actions refuse, explain, and call no api helper", async () => {
+    await expect(store().save()).resolves.toBe(false);
+    expect(store().error).toBe("There is no open document to save.");
+
+    useDocumentStore.setState({ error: null });
+
+    await expect(store().saveAsNewVersion()).resolves.toBe(false);
+    expect(store().error).toBe("There is no open document to save.");
+
+    expect(updateVersion).not.toHaveBeenCalled();
+    expect(createVersion).not.toHaveBeenCalled();
   });
 });
 

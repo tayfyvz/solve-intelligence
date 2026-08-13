@@ -85,7 +85,14 @@ def create_version(
     settings: Settings = Depends(get_settings),
 ) -> DocumentVersion:
     document = _document_or_404(db, document_id)
-    return crud.create_version(db, document, _clean_or_413(body.content, settings))
+    content = _clean_or_413(body.content, settings)
+    try:
+        return crud.create_version(db, document, content)
+    except crud.VersionNumberConflict:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Another save created a new version at the same time. Please try again.",
+        ) from None
 
 
 @router.put("/{document_id}/versions/{version_number}", response_model=VersionRead)

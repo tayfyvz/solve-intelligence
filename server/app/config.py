@@ -1,8 +1,10 @@
 """Typed configuration, loaded once from the environment and `.env`."""
 
 from functools import lru_cache
+from typing import Annotated
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -11,7 +13,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     database_url: str = "sqlite:///./data/app.db"
-    cors_origins: list[str] = ["http://localhost:5173"]
+    # NoDecode: pydantic-settings parses a list field as JSON *in the env source*,
+    # before any validator runs, so `CORS_ORIGINS=http://a,http://b` — the form
+    # everyone writes — would raise a JSONDecodeError at import, before there is
+    # an app to report it. NoDecode hands the raw string to the validator below.
+    cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
 
     openai_api_key: str | None = None
     openai_model: str = "gpt-5.2-2025-12-11"
@@ -22,6 +28,15 @@ class Settings(BaseSettings):
     max_instruction_chars: int = 2_000
     max_context_chars: int = 40_000
     max_history_turns: int = 3
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _split_comma_separated_origins(cls, value: object) -> object:
+        """Comma-separated is the documented form; a real list (the default, or a
+        test passing one in) falls through untouched."""
+        if isinstance(value, str):
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
 
     @property
     def ai_enabled(self) -> bool:

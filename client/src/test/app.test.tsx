@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Editor } from "@tiptap/core";
 
-import type { DocumentDetail, VersionRead } from "../types";
+import type { DocumentDetail, DocumentSummary, VersionRead } from "../types";
 
 // One mock for the whole seam. `toMessage` and `ApiError` stay real: this file's
 // first test asserts that what the UI shows is what `toMessage` produced.
@@ -47,11 +47,11 @@ const { default: App } = await import("../App");
 
 const store = () => useDocumentStore.getState();
 
-function detail(id: number): DocumentDetail {
+function detail(id: number, versions = [1]): DocumentDetail {
   return {
     id,
     title: `Patent ${id}`,
-    versions: [{ version_number: 1, updated_at: "2026-01-01T09:30:00" }],
+    versions: versions.map((n) => ({ version_number: n, updated_at: "2026-01-01T09:30:00" })),
   };
 }
 
@@ -62,6 +62,18 @@ function version(id: number, n: number): VersionRead {
     content: `<p>doc ${id} v${n}</p>`,
     updated_at: "2026-01-01T09:30:00",
   };
+}
+
+/** The app as the user finds it: one patent open on its newest version. */
+async function renderOpenDocument(versions = [1]) {
+  vi.mocked(listDocuments).mockResolvedValue([{ id: 1, title: "Patent 1" }]);
+  vi.mocked(getDocument).mockImplementation(async (id: number) => detail(id, versions));
+  vi.mocked(getVersion).mockImplementation(async (id: number, n: number) => version(id, n));
+  useDocumentStore.setState({ editor: fakeEditor() });
+
+  render(<App />);
+  await waitFor(() => expect(store().documentId).toBe(1));
+  await screen.findByTestId("editor");
 }
 
 /** The store only ever calls `getHTML()` on the editor — that is the contract. */
@@ -189,6 +201,80 @@ describe("App shell", () => {
     expect(vi.mocked(createVersion)).not.toHaveBeenCalled(); // requirement 3
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(store().dirty).toBe(false);
+  });
+
+  // Task 1 requirement 2, through the control the user actually touches. The
+  // store test proves `selectVersion` fetches; this proves the picker is wired to
+  // it and that the *editor* — not just the label — ends up on that version.
+  it("switching version via the select loads that version", async () => {
+    const user = userEvent.setup();
+    await renderOpenDocument([1, 2]);
+    expect(store().versionNumber).toBe(2);
+
+    await user.selectOptions(screen.getByLabelText("Version"), "1");
+
+    await waitFor(() => expect(store().versionNumber).toBe(1));
+    expect(vi.mocked(getVersion)).toHaveBeenCalledWith(1, 1);
+    await waitFor(() => expect(screen.getByTestId("editor").textContent).toBe("<p>doc 1 v1</p>"));
+    expect((screen.getByLabelText("Version") as HTMLSelectElement).value).toBe("1");
+  });
+
+  // Task 1 requirement 1, and the only test that would catch someone dropping
+  // `versionNumber` from the editor's `key={docId}:{versionNumber}`: this path
+  // never sets `loading`, so nothing else unmounts the editor. Without the key
+  // the pane would keep showing the pre-save content while the bar claimed to be
+  // on the new version.
+  it("save as new version from the bar remounts the editor on the new version", async () => {
+    const user = userEvent.setup();
+    await renderOpenDocument([1]);
+    act(() => store().setDirty(true));
+    vi.mocked(createVersion).mockResolvedValue({
+      document_id: 1,
+      version_number: 2,
+      content: "<p>created v2</p>",
+      updated_at: "2026-02-02T11:00:00",
+    });
+
+    await user.click(screen.getByRole("button", { name: "Save as new version" }));
+
+    await waitFor(() => expect(store().versionNumber).toBe(2));
+    expect(createVersion).toHaveBeenCalledWith(1, "<p>live</p>");
+    // The server's sanitised echo, reached by remount rather than by a prop write.
+    await waitFor(() => expect(screen.getByTestId("editor").textContent).toBe("<p>created v2</p>"));
+    expect((screen.getByLabelText("Version") as HTMLSelectElement).value).toBe("2");
+    expect(screen.queryByText("Unsaved changes")).toBeNull();
+  });
+
+  // The client half of the concurrent-create race the server answers with a 409:
+  // a second click while the first write is in flight must not be possible.
+  it("disables both save buttons while a save is in flight", async () => {
+    const user = userEvent.setup();
+    await renderOpenDocument([1]);
+    vi.mocked(updateVersion).mockReturnValue(new Promise<VersionRead>(() => {}));
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(
+        true,
+      ),
+    );
+    expect(
+      (screen.getByRole("button", { name: "Save as new version" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(createVersion).not.toHaveBeenCalled();
+  });
+
+  // A non-array body used to reach `documents.map` and paint a white screen — the
+  // one failure mode with nothing at all to read.
+  it("shows a message instead of a white screen when the document list is malformed", async () => {
+    vi.mocked(listDocuments).mockResolvedValue({ items: [] } as unknown as DocumentSummary[]);
+
+    render(<App />);
+
+    const banner = await screen.findByRole("alert");
+    expect(banner.textContent).toContain("The server returned an unreadable list of documents.");
+    expect(screen.getByText("No patents to open. Add one on the server, then reload.")).toBeTruthy();
   });
 
   // Not in the §13 gate, which covers this only in its manual row — but "" is

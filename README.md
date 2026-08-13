@@ -77,3 +77,25 @@ You may use AI (and the API key we have provided) to assist with coding on this 
 If your submission passes our review, the next stage will involve pair programming without AI assistance.
 
 Good luck!
+
+## Improvements made
+
+**Task 1 (document versioning) is implemented.** Content moved off `Document` onto a
+`DocumentVersion` table — a mutable draft, not an immutable snapshot, which is what makes
+requirement 3 work: `PUT /api/documents/{id}/versions/{n}` updates a version in place and never
+creates one, while `POST /api/documents/{id}/versions` creates `MAX+1` from the editor buffer.
+Switching versions is guarded by a Save / Save as new version / Discard / Cancel dialog when
+there are unsaved edits.
+
+Fixes to the inherited scaffold along the way:
+
+- File-backed SQLite with an idempotent seed, so versions survive a restart
+- `app/` split into `main.py`, `config.py`, `crud.py`, `sanitize.py` and `routers/`; 404s with
+  readable messages where routes previously returned `None` or a silent 200
+- Saved HTML sanitised against an allowlist derived from TipTap's StarterKit
+- Uncontrolled TipTap remounted by key (removes the sync-effect caret bug); Zustand store with
+  loading and error states rendered in the UI, not just the console
+- `docker-compose up --build` works from a clean clone; `npm run lint` and the test suites run
+
+**Task 2 is not implemented.** Option A (AI-powered editing) is designed but not built — see
+`DESIGN.md` for the intended structured-operations approach and the reasoning behind it.

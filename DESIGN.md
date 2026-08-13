@@ -54,7 +54,7 @@ Confirmed defects, and how the design answers them:
 
 | Where | Issue | Response |
 |---|---|---|
-| `db.py` | `:memory:` + `StaticPool` — one shared connection, data lost on restart | File-backed SQLite via `DATABASE_URL` |
+| `db.py` | `:memory:` + `StaticPool` — one shared connection, data lost on restart | File-backed SQLite via `DATABASE_URL`; `StaticPool` kept for in-memory URLs, where it is correct (see §4.4) |
 | `__main__.py` seed | Hardcoded `id=1,2` inserted every startup | Idempotent seed |
 | `GET /document/{id}` | Returns `None` for missing id → 500 | Explicit 404 |
 | `POST /save/{id}` | Returns 200 after updating 0 rows | Rowcount check → 404 |
@@ -78,6 +78,11 @@ Confirmed defects, and how the design answers them:
 ---
 
 ## 3. Architecture
+
+> **Status:** the versioning half of this is built. The AI half is **designed, not implemented** —
+> `routers/ai.py`, `ai/planner.py`, `ai/document.py`, `contextFile.ts` and `ChatPanel.tsx` do not
+> exist on disk yet. They are shown here because they are what the design commits to, not because
+> they are present.
 
 ```
 Browser
@@ -184,13 +189,23 @@ allowed; a missing row is 404; a missing/null `content` field is 422.
 ### 4.4 Database
 
 - `DATABASE_URL` defaults to `sqlite:///./data/app.db`; tests use `:memory:`
-- Startup creates the data directory and sets `foreign_keys=ON`, WAL, `busy_timeout`
+- The engine builder creates the data directory and sets `foreign_keys=ON` (which is what makes
+  `ondelete="CASCADE"` real) and `busy_timeout=5000` (two tabs saving at once wait rather than
+  fail). Journal mode is left at SQLite's default; WAL would be an easy addition but nothing in
+  this app's read/write pattern currently needs it
+- `StaticPool` is still used, but **only** for in-memory URLs: a shared in-memory database has no
+  file to share, so each pooled connection would otherwise see its own empty database. The
+  inherited bug was `:memory:` as the *production* URL; the pooling workaround it required remains
+  correct for tests
 - Seed is idempotent: if no documents exist, insert two patents at `version_number=1`
 - Reset by deleting `server/data/app.db` (documented in the README); `server/data/` is gitignored
 
 ---
 
 ## 5. Task 2 Option A — AI editing
+
+> **Status: not implemented.** This section is forward design — the intended model, operation
+> vocabulary, apply pipeline and endpoint contract. No code in this section exists yet.
 
 ### 5.1 Why structured operations, not HTML
 
@@ -332,8 +347,15 @@ in one screen.
 - **Uncontrolled.** No effect comparing HTML strings against `getHTML()`.
 - **Remount on switch:** `key={docId}:{versionNumber}` on both `Editor` and `ChatPanel` — this
   loads the right content, resets the caret cleanly, and clears the chat, all with one mechanism.
-- On ready, register the instance in the store and record `getHTML()` as the saved baseline.
-- AI apply uses `setContent(html, true)` (TipTap v2 positional `emitUpdate`) so the dirty flag fires.
+- On ready, register the instance in the store; on unmount, clear it — identity-guarded, because
+  React can commit the next key's `onCreate` before the previous child's cleanup runs.
+- **Dirty is a one-way boolean, not a diff against a baseline.** `Editor.onUpdate` is the only
+  writer; the two save actions and the two selection actions are the only clearers. No saved-HTML
+  baseline is recorded anywhere. Comparing strings would buy "typed and undid it" detection at the
+  cost of a second source of truth and a race with TipTap's async normalisation — not worth it,
+  and one writer to one flag is the version that can be explained live.
+- AI apply uses `setContent(html, true)` (TipTap v2 positional `emitUpdate`) so the dirty flag
+  fires through that same single writer.
 - Native `Cmd+Z` is verified as the undo path for AI edits before any custom Undo is considered.
 
 ### 6.3 Layout
@@ -356,7 +378,7 @@ land in another. All errors render in the UI, never only in the console.
 |---|---|
 | CORS | `http://localhost:5173` |
 | Config | `OPENAI_API_KEY`, `OPENAI_MODEL`, `DATABASE_URL`, size limits — via `pydantic-settings` |
-| Sanitising | `nh3` allowlist (`p`, `h1`–`h3`, `strong`, `em`, `s`, `ul`, `ol`, `li`, `br`) on the **save** path, where content is client-supplied |
+| Sanitising | `nh3` allowlist on the **save** path, where content is client-supplied. The list is derived from what TipTap's StarterKit can render, not from a generic "safe HTML" list — stripping a tag StarterKit supports is data loss wearing a security costume: `p`, `h1`–`h6`, `ul`, `ol`, `li`, `blockquote`, `pre`, `code`, `br`, `hr`, `strong`, `em`, `s`, plus `start`/`type` on `ol`. Known cosmetic loss: `code[class="language-*"]` |
 | No API key | Versioning and editing work fully; the chat panel shows a clear "AI unavailable" state |
 | Auth | None (out of scope) |
 | Concurrency | Last-write-wins on save |
@@ -366,6 +388,11 @@ land in another. All errors render in the UI, never only in the console.
 ## 8. Testing
 
 Roughly 20 tests, chosen for value rather than coverage percentage.
+
+> **Status:** the versioning, sanitiser and store tests are written. Every row below that exercises
+> the AI layer — the parse round-trip, the four README examples, the apply rules, the fake-planner
+> route test, `.txt` validation and ChatPanel — is **planned, not written**, because the code it
+> would cover does not exist yet (§5).
 
 **Backend (`pytest`)**
 
@@ -416,6 +443,26 @@ Roughly 20 tests, chosen for value rather than coverage percentage.
 **Not building:** Option B (websockets, presence, CRDT); auth; autosave; version delete, rename,
 diff or branching; streaming responses; agent loops or RAG; persisted chat history; CI;
 USPTO amendment markup.
+
+**Known limitations, accepted deliberately for this submission:**
+
+- **No migrations.** Schema creation is `Base.metadata.create_all`, which creates missing tables
+  and never alters an existing one — change a column and an already-seeded `app.db` silently keeps
+  the old shape. Fine while the reset story is `rm server/data/app.db`; the first thing to add on
+  the way to a real deployment is Postgres + Alembic.
+- **Naive UTC timestamps at 1-second resolution.** `created_at`/`updated_at` use SQLite's
+  `CURRENT_TIMESTAMP` via `func.now()`, so they carry no timezone and two saves inside the same
+  second are indistinguishable. `DateTime(timezone=True)` with a database-side default is the
+  correct fix; it is a schema change, so it belongs in its own change alongside migrations.
+- **Single-viewport layout by choice.** The three-column grid is sized for a desktop review
+  session and does not reflow; at narrow widths the columns compress rather than stack. Responsive
+  behaviour is a real gap, not a subtle one — it is simply not what this submission is
+  demonstrating.
+- **TipTap StarterKit drops tables, links and images.** Anything outside the StarterKit schema is
+  discarded on paste, and the save-path sanitiser allowlist matches that schema deliberately. For a
+  patent tool this matters more than it sounds: attorneys paste claim sets and prior-art passages
+  out of Word, and a pasted table disappears without a warning. Adding the `Table`, `Link` and
+  `Image` extensions (and widening the allowlist in step) is the fix.
 
 **Would do next, given more time** — and how it maps onto Solve's stack:
 

@@ -35,8 +35,13 @@ export default function DocumentList({
               disabled={disabled}
               aria-current={selected ? "true" : undefined}
               onClick={() => onSelect(document.id)}
-              className={`w-full rounded px-3 py-2 text-left text-sm disabled:opacity-50 ${
-                selected ? "bg-sky-100 font-semibold text-sky-900" : "hover:bg-slate-100"
+              // Truncated with the full title on hover: a 500-character title
+              // would otherwise reflow the 13rem sidebar into a paragraph.
+              title={document.title}
+              className={`focus-ring w-full truncate rounded-lg px-3 py-2 text-left text-sm transition-colors duration-150 disabled:opacity-50 ${
+                selected
+                  ? "border border-slate-200 bg-white font-semibold text-slate-900 shadow-sm"
+                  : "border border-transparent text-slate-600 hover:bg-slate-200/60 hover:text-slate-900"
               }`}
             >
               {document.title}
