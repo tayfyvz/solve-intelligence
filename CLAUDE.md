@@ -20,7 +20,7 @@ This is an engineering challenge submission. Two consequences that override norm
 ```sh
 # Backend (from server/)
 uv sync                                        # install
-uv run uvicorn app.__main__:app --reload       # dev server, :8000
+uv run uvicorn app.main:app --reload           # dev server, :8000 (__main__ is a shim)
 uv run pytest                                  # tests
 uv run ruff check . && uv run ruff format .    # lint + format
 
@@ -41,10 +41,17 @@ rm server/data/app.db                          # reset the database
 
 Violating any of these is a bug, not a style preference.
 
-1. **`app/ai/document.py` must never import `openai`.** The edit engine is a pure function over
-   parsed documents. This is what makes the majority of the test suite runnable without an API key.
-2. **`POST /api/ai/edit` must never write to the database.** It returns HTML; only an explicit user
-   save persists anything.
+1. **The eight engine modules import neither `openai` nor `langgraph`.** Those are `document`,
+   `outline`, `operations`, `apply`, `verify`, `schemas`, `understand` and `summary` — plus
+   `nodes.py`, which is held to the same rule. The engine is pure functions over parsed documents.
+   This is what makes the great majority of the test suite runnable with no API key and no network.
+   `llm.py` is the only module that imports `openai`; `graph.py` is the only one that imports
+   `langgraph`. **T5 enforces it by glob in a fresh subprocess**, so a new file under `app/ai/` is
+   covered the moment it is added rather than when someone remembers to list it.
+2. **Neither AI route writes to the database.** `POST /api/ai/chat` (run 1) and
+   `POST /api/ai/apply` (run 2) return HTML; only an explicit user save persists anything. The
+   mechanism is not discipline: **neither handler takes a `db` parameter**, so there is nothing to
+   write with. R13 asserts it against the live signatures.
 3. **The client only calls `setContent` when the AI response `html` is non-null.** A failed or
    ambiguous AI request must leave the document byte-identical.
 4. **Claim numbers are a field on `Claim`, never text.** They are stripped on parse and re-injected
@@ -69,9 +76,13 @@ Violating any of these is a bug, not a style preference.
 
 Confirmed by running the real libraries — do not re-derive or assume otherwise:
 
-- **`openai` 1.109.1.** `client.chat.completions.parse` exists on the **stable** path.
-  `openai.resources.beta.chat` **does not exist** — `client.beta.chat.completions.parse` will
-  raise. Model is `gpt-5.2-2025-12-11`; `client.models.retrieve` resolves it (`owned_by=system`).
+- **`openai` 1.109.1.** `client.chat.completions.parse` exists on the **stable** path, and that is
+  what `llm.py` calls. Model is `gpt-5.2-2025-12-11`; `client.models.retrieve` resolves it
+  (`owned_by=system`). *(An earlier version of this file said `client.beta.chat.completions.parse`
+  "will raise". **That was wrong** — C21: the module `openai.resources.beta.chat` is indeed gone,
+  but `client.beta.chat` is a live alias and `.parse` is a working bound method. The design is
+  unaffected, because we use the stable path either way; only the justification was false, and a
+  false justification defended out loud is worse than none.)*
 - **`temperature` and `reasoning_effort` are MUTUALLY EXCLUSIVE on `gpt-5.2-2025-12-11`, and that
   is the fact that matters.** Measured 2026-08-14 (PLAN §27.4 correction 40):
 
@@ -101,10 +112,14 @@ Confirmed by running the real libraries — do not re-derive or assume otherwise
 - **Measured latency for one `chat.completions.parse` call** (14 live calls, 2026-08-13, the real
   schemas over the seed outline): **min 1.1 s, median 1.5 s, max 6.7 s** (the 6.7 s was an
   `insert_section` request carrying prior-art text). The five-call worst case at the observed max
-  is ~33 s. `reasoning_effort="low"` is accepted.
+  is ~33 s. `reasoning_effort="low"` is accepted **on its own** — but see the mutual-exclusion row
+  above before setting it; it is shipped as `None`.
 - **`@tiptap/core` 2.27.1.** `setContent(content, emitUpdate?, parseOptions?, options?)` is
-  **positional**. Use `setContent(html, true)` so `onUpdate` fires. There is also an
-  `errorOnInvalidContent` option worth enabling.
+  **positional**. Use `setContent(html, true)` so `onUpdate` fires — dropping that `true` is the
+  highest-severity one-character bug in this feature. *(An earlier version recommended enabling
+  `errorOnInvalidContent`. It was **cut** in PLAN §1.1: without an `onContentError` handler it is a
+  no-op that silently drops content from a stored version, which is worse than absent. The
+  `try/catch` around `setContent` is the real guard and stays.)*
 - **`getHTML()` output is a single line**: no newlines, whitespace collapsed to single spaces,
   `<!DOCTYPE>`/`<head>`/`<title>` stripped, `<h1>Claims</h1>` preserved.
   Patent 1 → 19 `<p>` elements, 8 claims (claim 1 spans 5 paragraphs). Patent 2 → 9 claims.
@@ -119,11 +134,16 @@ Confirmed by running the real libraries — do not re-derive or assume otherwise
   The title belongs on `Document.title`, never in the content column.
 - **TipTap StarterKit's `Paragraph` declares no attributes** — `data-*` markers on paragraphs are
   silently stripped on the round-trip. Structure cannot be smuggled through attributes.
-- **`.env` is gitignored and absent.** `docker-compose up` fails until it is created.
-- **ESLint 9 with a legacy `.eslintrc.cjs`** and the removed `--ext` flag — `npm run lint` is
-  broken until migrated to a flat `eslint.config.js`.
-- **The docker bind-mount masks the image's `.venv`.** Needs a named volume, as `node_modules`
-  already has.
+- **`.env` is gitignored and absent.** `docker-compose up` fails until it is created — compose
+  resolves `env_file` up front. Still true, and deliberately so: it is the first line of the README.
+- **ESLint 9 — FIXED.** Migrated to a flat `eslint.config.js` and `npm run lint` is clean. *(The
+  original note blamed "the removed `--ext` flag". **C22: `--ext` is not removed** — eslint 9.39.2
+  still accepts it as an inert no-op under flat config. The only real blocker was the missing
+  `eslint.config.js`. The trap worth remembering is the opposite one: dropping `--ext` **without**
+  a `files: ['**/*.{ts,tsx}']` entry gives a green lint that checks nothing.)*
+- **The docker bind-mount masks the image's `.venv` — FIXED** with an anonymous volume
+  (`- /usr/src/app/.venv`), as `node_modules` already had. Compose **reuses** anonymous volumes on
+  recreate, so `docker compose down -v` is the escape hatch when dependencies change.
 - **Patent 1 claim 7 references "claim 5" where it means claim 6.** The seed data contains a real
   cross-reference error. Do not "fix" it — it is useful test material.
 
@@ -151,6 +171,8 @@ Tests must justify their existence — target ~20 meaningful ones, not a coverag
 
 ## Scope discipline
 
-Do not build: Option B (collaboration, presence, CRDT), auth, autosave, version rename/diff/delete,
-streaming, agent loops, RAG, persisted chat, or CI. "Not overly complex" is an explicit requirement
+Do not build: Option B (collaboration, presence, CRDT), auth, autosave, version **diff or
+delete**, streaming, agent loops, RAG, persisted chat, or CI. *(This list used to ban version
+"rename/diff/delete". **Version rename shipped in Task 1** and is in the UI — a scope rule that
+forbids something already built teaches the reader to distrust the whole list.)* "Not overly complex" is an explicit requirement
 of the brief. Ideas beyond scope belong in the `DESIGN.md` future-work section, not in the code.

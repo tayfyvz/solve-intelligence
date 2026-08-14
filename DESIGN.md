@@ -79,10 +79,14 @@ Confirmed defects, and how the design answers them:
 
 ## 3. Architecture
 
-> **Status:** the versioning half of this is built. The AI half is **designed, not implemented** —
-> `routers/ai.py`, `ai/planner.py`, `ai/document.py`, `contextFile.ts` and `ChatPanel.tsx` do not
-> exist on disk yet. They are shown here because they are what the design commits to, not because
-> they are present.
+> **Status: both halves are built and shipping.** This note used to say the AI half was "designed,
+> not implemented". It is implemented, and where the shipped code diverges from what this document
+> originally committed to, the divergence is called out inline rather than silently rewritten —
+> `PLAN.md` §1 and §2 record every decision, and §27.4 records what the Step 6 stress pass
+> overturned. The one structural surprise: `ai/planner.py` never existed. It became eleven modules
+> under `ai/`, for the reason in PLAN §1.2 — one file holding model + parse + render + six
+> operations + bind + apply + renumber + remap + verify is 600+ lines and eight concerns, and it is
+> precisely the file an interview centres on and the one you could not walk in sixty seconds.
 
 ```
 Browser
@@ -93,16 +97,28 @@ Browser
                           ▼  HTTP JSON
 Server
   routers/documents.py ── crud ── models ── SQLite (file)
-  routers/ai.py ── ai/planner.py (OpenAI → EditPlan)
-                └─ ai/document.py (parse · apply · renumber · render)
+  routers/ai.py ── ai/graph.py (LangGraph) ── ai/nodes.py ── ai/llm.py (the only OpenAI import)
+                └─ ai/apply.py ── ai/{document,operations,verify}.py
                      └─ sanitize (nh3)
 ```
 
 **Save path:** editor HTML → `PUT /api/documents/{id}/versions/{n}` → sanitize → update row.
 
-**AI path:** editor HTML + instruction + optional file text → `POST /api/ai/edit` → plan → apply
-→ sanitized HTML. **This route never writes the database.** Persistence is always an explicit
-user action.
+**AI path — two routes, not one.** The single `POST /api/ai/edit` this document originally
+specified was superseded (PLAN §1.4): generated prose must be confirmed *before* it lands, and
+human-in-the-loop lives **between two graph runs** rather than inside one.
+
+- **Run 1 — `POST /api/ai/chat`:** editor HTML + instruction + optional file text + a `consented`
+  boolean → understand → (retrieve → draft ⇄ judge | plan_ops | answer) → verify. Returns one of
+  six statuses. On an unconsented version a document-changing plan comes back as a **proposal**
+  carrying operations, never HTML.
+- **Run 2 — `POST /api/ai/apply`:** the proposal plus the current HTML → re-validate → apply →
+  verify → sanitized HTML. Deterministic and offline: it never reaches OpenAI, so it works with no
+  API key configured.
+
+**Neither route writes the database**, and the mechanism is not discipline: **neither handler takes
+a `db` parameter.** Persistence is always an explicit user action — the client orchestrates version
+creation through the existing `POST /api/documents/{id}/versions`.
 
 ### Layout
 
@@ -118,9 +134,19 @@ server/app/
 ├── sanitize.py      # nh3 allowlist
 ├── data.py          # seed fragments + titles
 ├── routers/{documents,ai}.py
-└── ai/
-    ├── document.py  # parse · apply · renumber · render   (no OpenAI import)
-    └── planner.py   # OpenAI call → validated EditPlan
+└── ai/            # the engine — see server/README.md for the reading order
+    ├── document.py    # ParsedDocument, parse(), render() — the round-trip contract
+    ├── outline.py     # build_outline / build_context / claims_excerpt
+    ├── operations.py  # the six operations, and KIND_ORDER
+    ├── schemas.py     # every model↔engine contract, and require()
+    ├── apply.py       # bind → apply → renumber once → remap cross-references
+    ├── verify.py      # the deterministic gate on the produced artefact
+    ├── understand.py  # the fast path and gate_understanding
+    ├── summary.py     # one human sentence per operation
+    ├── prompts.py     # prompt text only
+    ├── llm.py         # THE ONLY module that imports `openai`
+    ├── nodes.py       # the seven node functions and node_guard
+    └── graph.py       # THE ONLY module that imports `langgraph`
 server/tests/
 
 client/src/
@@ -128,10 +154,16 @@ client/src/
 ├── api.ts, types.ts
 ├── store.ts                 # useDocumentStore
 ├── contextFile.ts           # .txt validation
-└── components/{Editor,ChatPanel,DocumentList,VersionBar}.tsx
+├── ai/{claims,selection,highlight,format}.ts   # claim spans, selection, the format fast-path
+└── components/
+    ├── {Editor,DocumentList,VersionBar,TxtDropZone}.tsx
+    └── chat/{ChatPanel,MessageList,Message,Composer,ContextChips,ProposalPrompt}.tsx
 ```
 
-`ai/document.py` imports nothing from OpenAI, so the entire edit engine is testable without a key.
+**The eight engine modules — `document`, `outline`, `operations`, `apply`, `verify`, `schemas`,
+`understand`, `summary` — plus `nodes.py` import neither `openai` nor `langgraph`**, so the entire
+edit engine is testable with no key and no network. `T5` enforces this by glob in a fresh
+subprocess, which means a new file under `app/ai/` is covered the moment it is added.
 
 ---
 
@@ -254,9 +286,20 @@ delete_claim   (claim_number)
 insert_claim   (after_claim_number, text)          # 0 = before claim 1
 replace_claim  (claim_number, text)                # rewrite / shorten / amend
 insert_section (heading, paragraphs[], position: before_claims|after_claims)
-delete_section (heading)
-replace_text   (find, replace, scope: document|claim:N)
+replace_text   (find, replace)                     # document-wide
 ```
+
+**Six operations, not the seven this document first listed.** Two cuts, both in PLAN §1.1:
+
+- **`delete_section` was removed.** No requirement asked for it, and its failure mode is
+  *destroying the patent* — which is why it needed a "refuses to delete the Claims heading" guard,
+  a guard that existed only because the operation existed. It also owned one of three ordering
+  rules. *"Rewrite the background"* now returns `needs_clarification`, which is this document's own
+  stated principle rather than an exception to it.
+- **`replace_text` lost its `scope` field.** Nobody asked for claim-scoped find/replace, and it
+  bought a `"claim:N"` string-parsing failure mode. Replacement is document-wide, and when a phrase
+  occurs more than once the operation says so: *"That text appears 8 times; all of them were
+  changed."*
 
 Anything outside this vocabulary returns `needs_clarification` with a message explaining what the
 assistant *can* do. **An unsupported instruction never produces a partial or wrong edit** — that
@@ -277,8 +320,10 @@ Rules:
 1. **All claim references resolve against the original parse.** `[delete 3, delete 5]` deletes the
    claims the user saw, not claim 6.
 2. Fixed kind order: `replace_text` → `replace_claim` → `format_claim` → `insert_claim` →
-   `delete_claim` → `delete_section` → `insert_section`. Within a kind, plan order. Multiple
-   inserts after the same claim chain off each other.
+   `delete_claim` → `insert_section`. Within a kind, plan order (Python's sort is stable). Multiple
+   inserts after the same claim chain off each other. Three of these adjacencies are *necessary*
+   and one is a *choice*; the code says which, because it is the most likely "why?" in a pairing
+   round, and reversing the tuple must fail a test.
 3. `format_claim` applies the mark to **every block** of the claim.
 4. Renumber **once**, at the end. Then rewrite `claim (\d+)` references through the old→new map.
    References to a *deleted* claim are **not** rewritten — they are reported as a warning, because
@@ -287,31 +332,52 @@ Rules:
 
 ### 5.5 Endpoint
 
-`POST /api/ai/edit`
+**Run 1 — `POST /api/ai/chat`**
 
 ```json
-{ "html": "...", "instruction": "Make claim 1 bold",
-  "context_text": null, "history": [{"role": "user", "content": "..."}] }
+{ "document_id": 1, "version_number": 2, "html": "...", "instruction": "Make claim 1 bold",
+  "context_text": null, "context_name": null, "selection": null, "consented": false,
+  "pending_question": null, "clarify_count": 0,
+  "history": [{"role": "user", "content": "..."}] }
 ```
 
 ```json
-{ "status": "ok" | "needs_clarification" | "error",
+{ "status": "applied" | "proposal" | "answer" | "no_change" | "needs_clarification" | "error",
   "html": "<h1>Claims</h1>...",
   "message": "Made claim 1 bold.",
+  "proposal": { "proposal_id": "...", "base_sha256": "...", "operations": [...] },
+  "citations": [3], "options": ["Make claim 1 bold."],
   "warnings": ["Claim 4 references claim 3, which was deleted."] }
 ```
 
-`html` is `null` for any status other than `ok`, and for an `ok` plan with no operations. The
-client only calls `setContent` when `html` is non-null, so **a failed AI request can never change
-the document.** Size caps on instruction, context and HTML; history capped at 3 turns.
-Missing key → 503, timeout → 504, provider rate limit → 429 — each with a readable message.
+**Six statuses, not three** — the wire shape grew with the design. `html` is non-null **iff**
+`status == "applied"`, and that is not a convention: a `model_validator` on the response model
+enforces it, because the client's dirty flag rests on `html != null ⟺ the document changed`. It is
+therefore also null when operations ran and changed nothing. **The client calls `setContent` only
+when `html` is non-null, so a failed or ambiguous AI request leaves the document byte-identical.**
+
+**Run 2 — `POST /api/ai/apply`** takes `{ html, proposal }` and returns
+`{ status, html, message, verification, warnings }`. It re-hashes the submitted HTML against
+`proposal.base_sha256` and **409s on a mismatch**, so an "Apply" cannot write an edit computed
+against text the user has since changed. A TTL on `created_at` gives staleness detection with
+**zero server state** — there is no proposal store to expire, restart or garbage-collect.
+
+Size caps on instruction, context, selection and HTML; history capped at 3 turns (= 6 messages).
+Missing or placeholder key → **503**, rejected key → **502**, timeout → **504**, provider rate
+limit → **429** — each with a sentence a user can read and act on.
 
 ### 5.6 Planner
 
-`ai/planner.py` is the only file that imports `openai`. Structured Outputs validate the plan into
-Pydantic models before it reaches the apply layer. The prompt carries: the operation vocabulary and
-rules; a compact claims outline (one line per claim, noting extra paragraphs) rather than the full
-HTML; the optional prior-art text; the last 3 turns; the instruction last.
+**`ai/llm.py` is the only file that imports `openai`** (this section said `ai/planner.py`; see the
+status note in §3 — the planner became a package). `ai/graph.py` is the only file that imports
+`langgraph`. Structured Outputs validate every model response into Pydantic models before it
+reaches the apply layer, and `require()` re-validates each operation before it reaches the applier.
+
+The prompt carries: the operation vocabulary and rules; a compact claims outline (one line per
+claim, noting extra paragraphs) rather than the full HTML; **the full text of the claims actually
+being edited** — added after the live pre-flight, which showed a model correctly *refusing* to
+rewrite a claim it had only seen truncated to 240 characters; the optional prior-art text; the last
+3 turns; the instruction last.
 
 **Uploaded file text is data, never instructions.** It is delimited and the system prompt states
 that content inside the delimiter is reference material only. Tests inject a fake planner
@@ -378,7 +444,7 @@ land in another. All errors render in the UI, never only in the console.
 |---|---|
 | CORS | `http://localhost:5173` |
 | Config | `OPENAI_API_KEY`, `OPENAI_MODEL`, `DATABASE_URL`, size limits — via `pydantic-settings` |
-| Sanitising | `nh3` allowlist on the **save** path, where content is client-supplied. The list is derived from what TipTap's StarterKit can render, not from a generic "safe HTML" list — stripping a tag StarterKit supports is data loss wearing a security costume: `p`, `h1`–`h6`, `ul`, `ol`, `li`, `blockquote`, `pre`, `code`, `br`, `hr`, `strong`, `em`, `s`, plus `start`/`type` on `ol`. Known cosmetic loss: `code[class="language-*"]` |
+| Sanitising | `nh3` allowlist on the **save** path, where content is client-supplied. The list is derived from what TipTap's StarterKit can render, not from a generic "safe HTML" list — stripping a tag StarterKit supports is data loss wearing a security costume: `p`, `h1`–`h6`, `ul`, `ol`, `li`, `blockquote`, `pre`, `code`, `br`, `hr`, `strong`, `em`, `s`, plus `start`/`type` on `ol`. Known cosmetic loss: `code[class="language-*"]`. **`TECHNOLOGY.md` §2.2 is the source of truth for this list** — one allowlist, stated once, so the two documents cannot drift |
 | No API key | Versioning and editing work fully; the chat panel shows a clear "AI unavailable" state |
 | Auth | None (out of scope) |
 | Concurrency | Last-write-wins on save |
@@ -423,7 +489,7 @@ Roughly 20 tests, chosen for value rather than coverage percentage.
 | 1 | Models, versioning API, idempotent seed, tests | Task 1 backend, tested |
 | 2 | Store, version bar, two save buttons, TipTap fixes | **Task 1 fully demoable** |
 | 3 | `ai/document.py` + full engine test suite | Engine correct with no LLM involved |
-| 4 | `ai/planner.py`, `/api/ai/edit`, ChatPanel, drag-and-drop | **Option A demoable** |
+| 4 | `ai/` engine, graph, `/api/ai/chat` + `/api/ai/apply`, ChatPanel, drag-and-drop | **Option A demoable** |
 | 5 | Error states, no-key mode, sanitising, stress pass | Hardening |
 | 6 | README write-up, final review | Submit |
 

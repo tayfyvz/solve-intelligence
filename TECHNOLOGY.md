@@ -128,12 +128,29 @@ Verified from `@tiptap/starter-kit@2.27.1`'s bundled extensions:
 ```
 Nodes  → p · h1–h6 · ul · ol · li · blockquote · pre · code · br · hr
 Marks  → strong (bold) · em (italic) · s (strike) · code
-Attrs  → start (on ol)
+Attrs  → start AND type (both on ol)
 Never  → script · iframe · a · img · table · style · on* handlers
 ```
 
-A test asserts both seed patents survive sanitising byte-identically, which is how we prove the
-allowlist is complete rather than hoping.
+**`ol` takes `type` as well as `start`** — verified in `ordered-list.ts:77-90`, which declares both.
+An earlier draft of this list omitted `type`, and omitting an attribute StarterKit emits means a
+save silently rewrites the user's list numbering. **`h4`–`h6`, `blockquote`, `pre`, `code` and `hr`
+are on the list for the same reason** (`heading.ts:52` declares levels 1–6): every one of them is
+reachable *by accident* — typing `#### `, `> `, ```` ``` ```` or `---` at the start of a line — so a
+generic "safe HTML" list would have deleted a user's content the first time they used a markdown
+shortcut. This is C2 in PLAN §2.1, and **this block is the source of truth**; `DESIGN.md §7` defers
+to it.
+
+**Two honest gaps, stated rather than papered over.** `code[class="language-*"]` is stripped, so a
+code block loses its language hint — cosmetic, and recorded in PLAN §2.4. And nh3's `attributes=`
+argument does **not** fully replace its attribute handling: `title` and `lang` are permitted on
+every allowed tag regardless of what we pass. Both are inert, so this is documented and tested
+rather than fought.
+
+A test asserts both seed patents survive sanitising byte-identically, and a second asserts each
+accidentally-reachable element survives a round-trip — which is how we show the allowlist is
+complete rather than hoping. It was also confirmed by hand in Step 6: a blockquote applied in the
+editor survived save **and a full page reload**.
 
 | Alternative | Rejected because |
 |---|---|
@@ -367,9 +384,15 @@ drafter returns typed claim text, the judge returns a typed score plus reason.
 | **Instructor** | A wrapper around the feature `openai` already exposes natively on the stable path. Nothing to gain. |
 | **LangChain's model wrappers** (`ChatOpenAI`, `with_structured_output`) | We **do** use LangGraph (§2.5), but only its graph runtime. Every LLM call still goes through the raw `openai` client and `client.chat.completions.parse` — one provider, one API, one place to look when a call misbehaves. `langchain-core` arrives as a transitive dependency; we do not build on it. |
 
-**Verified:** `client.chat.completions.parse` exists on the **stable** path in `openai==1.109.1`.
-The `openai.resources.beta.chat` module **no longer exists** — code written against
-`client.beta.chat.completions.parse` (a common older pattern) will raise `AttributeError`.
+**Verified:** `client.chat.completions.parse` exists on the **stable** path in `openai==1.109.1`,
+and that is what `llm.py` calls.
+
+*Correction (C21).* This paragraph used to add that the `openai.resources.beta.chat` **module** is
+gone and therefore `client.beta.chat.completions.parse` "will raise `AttributeError`". The first
+half is true; **the second does not follow and is false** — `client.beta.chat` is a live alias and
+`.parse` is a working bound method. The design is unaffected either way, because we use the stable
+path for its own sake. It is corrected here because a justification that is wrong is worse than no
+justification when the document is defended out loud.
 
 ### 4.3 Two tables; `DocumentVersion` is a mutable draft
 
@@ -412,13 +435,30 @@ On write  number = 1  +  text                   →   "1. A wireless optogenetic
 While we're editing, a claim's number is **data**, not words. Renumbering is then just counting —
 `1, 2, 3…` down the list — instead of finding and rewriting text inside sentences.
 
-**What this prevents.** If numbers stayed as text: "make claim 1 bold" might bold the "1." too and
-produce `<strong>1. A wireless…`, which then breaks the parser next time. A find-and-replace of
-"1" could mangle claim numbers. Renumbering would mean string surgery on every claim. Keeping the
-number as a field makes all of that impossible rather than merely unlikely.
+**What this prevents.** A find-and-replace of "1" could mangle claim numbers. Renumbering would
+mean string surgery inside every claim's sentence. Keeping the number as a field makes both
+impossible rather than merely unlikely, and it is what lets `delete_claim` be a list operation.
 
 Parse strips `"1. "` into `Claim.number`; render re-injects it. Nothing derives claim identity from
 rendered text.
+
+**One thing an earlier version of this section claimed, which is false and worth correcting
+precisely.** It said that bolding a claim would produce `<strong>1. A wireless…` and *"then break
+the parser next time"*. **The first half happens on every bolded claim; the second half does not.**
+`format_claim` marks the whole block, so render legitimately emits
+`<p><strong>1. A wireless…</strong></p>` — the leading text node is **inside** the `<strong>`, and
+that is the common case, not an edge case.
+
+The parser handles it by design. It reads block text through BeautifulSoup's `get_text()`, so it
+sees through marks entirely; and `_strip_prefix` **descends through leading inline elements**,
+consuming the prefix's characters in document order and dropping the wrapper if it empties. The
+guarantee is not "`<p><strong>1. …` never occurs" — it occurs constantly. The guarantee is the pair
+of round-trip invariants in PLAN §2.2 (C20): **identity on canonical input** (T1/T2) and
+**idempotence in general** (T3), with `VF-E5` enforcing the second at runtime. Test **T12** is the
+bolded-prefix case specifically.
+
+Claiming the stronger property would have been easy to write and impossible to defend, since a
+reviewer can produce a counter-example in one click.
 
 **Why not `data-claim-id` attributes?** Verified: StarterKit's `Paragraph` declares no attributes,
 so `data-*` is **silently stripped** on the TipTap round-trip. Structure cannot be smuggled through
@@ -588,11 +628,19 @@ offers a built-in way to do that — `interrupt()` plus a checkpointer that pers
 so it can resume later. **We use neither.** Instead:
 
 ```
-Run 1  POST /api/ai/edit      instruction → route → draft → judge → proposal (HTML + summary)
+Run 1  POST /api/ai/chat      instruction → understand → retrieve → draft ⇄ judge → verify
+                              → proposal (operations + summary — NO HTML)
                               ↓ nothing persisted; the graph run ends
-       client holds the proposal and renders a diff-style preview
-Run 2  POST /api/ai/apply     user clicks Apply → plan → apply → verify → new version
+       client holds the proposal and renders it as a plain-language summary
+Run 2  POST /api/ai/apply     user clicks Apply → re-validate → apply → verify → new version
 ```
+
+Two details this diagram used to get wrong. The route is **`/api/ai/chat`**, not `/api/ai/edit` —
+run 1 also answers questions and asks clarifying ones, so naming it "edit" undersold it. And the
+proposal carries **no HTML at all**: only operations and a summary. The only HTML-shaped field
+anywhere in the AI surface is the top-level `html`, and only an *applied* outcome has one. That is
+what makes "the AI cannot change your document until you click Apply" a structural fact rather than
+a promise about client code.
 
 **In plain English.** Rather than pausing a running program and hoping we can wake it up later, we
 finish, hand the answer back, and start a fresh program when the user decides. The server keeps no
@@ -668,43 +716,67 @@ rather than only synthetic ones.
 | **Ask the LLM to check its own work** | Another call, non-deterministic, and it can be wrong in the reassuring direction. |
 | **Hard-fail on any warning** | A cross-reference to a deleted claim is a real editorial decision, not a crash. Surfacing it and letting the user judge is correct (`DESIGN.md` §5.4 rule 4). |
 
-### 4.16 Consent + auto-versioning for generative edits — decided in Python
+### 4.16 Sticky per-version consent — decided in Python, from one boolean
 
-**The rule.** Operations are split into two classes by kind:
+**This section previously described a different design** — a gate keyed on `GENERATIVE_KINDS`, where
+an operation that wrote new prose forced a proposal and a new version, and a mechanical one did not.
+That gate is **retired**. It was wrong in *both* directions, which is why it is worth recording
+rather than quietly replacing:
 
-```python
-GENERATIVE_KINDS = {"replace_claim", "insert_claim", "insert_section"}   # writes new prose
-# everything else — format_claim, delete_claim, delete_section, replace_text — is mechanical
+- **Too loose.** "Delete claim 3" is mechanical by kind, so it applied straight into the buffer with
+  no confirmation and no restore point. Deleting a claim is one of the most destructive things this
+  tool can do, and it was the case the gate waved through.
+- **Too tight.** Bolding four claims one at a time on an already-confirmed version produced four
+  proposals and four versions — the version-sprawl the feature exists to avoid.
+
+**The shipped rule: consent is sticky per version.** The **first** AI change on a version is
+confirmed by the user and creates a restore point; **every change after that on the same version is
+ordinary editing** — applied straight into the buffer, no prompt, no further version. Any navigation
+(different patent, different version) clears it, and the next change is confirmed again.
+
+```
+v2  "Make claim 1 bold"   → proposal → Proceed → applies, creates v3, consent moves to v3
+v3  "Delete claim 3"      → applies immediately. Still v3. "Not saved yet."
+v3  → switch to v1 → "Make claim 1 bold" → proposal again → Proceed → v4
 ```
 
-If any operation in a plan is in `GENERATIVE_KINDS`, the request returns a **proposal** instead of
-applying (§4.14), and applying it **creates a new version** rather than overwriting the current
-one. Mechanical edits apply directly into the current buffer, as they do today.
+That is `CT1`–`CT14` and it is walked by hand in `PHASE6-MANUAL.md`. **The arithmetic that justifies
+it:** a seven-instruction editing session costs **seven** versions under "version every AI edit",
+**one** under "never version", and **two** under this rule — each of the two created by a human
+clicking Proceed.
 
-**Why generative edits get both treatments.** Bolding claim 1 is reversible by eye and by `Cmd+Z`.
-Rewriting claim 4's language replaces text a patent attorney chose word by word — the previous
-wording must remain retrievable, and the user must have agreed to the new wording *before* it
-appeared. Consent and a version are the same protection at two layers.
+**Why the decision is still made in Python, and why it is now *one boolean*.** The client derives a
+`ConsentKey {documentId, versionNumber}` and compares it against the live store, sending a single
+`consented` flag. The server reads that flag and nothing else — **not the operation kinds, not the
+understanding's intent, and not anything the model said about itself.** The gate is therefore still
+outside the thing being gated, which is the property that matters when an uploaded `.txt` is
+attacker-controlled text: **nothing written in an uploaded file can talk its way past it**, because
+the model has no field with which to express an opinion about consent. A prompt injection can at
+worst cause a *wrong* operation to be proposed, which the user sees and rejects.
 
-**Why the decision is made in Python, from the operation kinds.** This is the load-bearing part.
-The alternative — letting the model set an `is_generative` flag, or classify its own request — puts
-the safety gate inside the thing being gated. We accept an uploaded `.txt` of prior art, and that
-file is attacker-controlled text (`DESIGN.md` §5.6). **Nothing written in an uploaded file can talk
-its way past a gate that is a Python set-membership test on a schema-constrained enum.** A prompt
-injection can at worst cause a *wrong* operation to be proposed — which the user then sees and
-rejects — but it cannot cause any operation to skip consent.
+**Why a derived key rather than a stored flag.** A bare `aiConsentedVersion: number` is ambiguous
+across patents — consent granted on patent 1 would carry to patent 2 — and it is a flag someone must
+remember to clear, so a future `selectVersionByName()` that nobody wires up fails **open**. A key
+derived from live store state has no reset call site at all and fails **closed**. Nothing about
+consent is stored anywhere.
 
-**Version created after apply, never before.** The order is: apply → verify → then insert the
-version row. If the apply raises or verify hard-fails, no row exists. **There are no orphan
-versions** — a user never sees "Version 4" in the dropdown containing the same content as version 3
-because a generation failed halfway.
+**`GENERATIVE_KINDS` survives, demoted.** It no longer decides anything. Its one remaining job is
+`AiProposal.authors_new_text`, which tells the confirmation card whether the plan **writes new
+prose** or merely rearranges text the user already approved — the single most useful thing to tell a
+patent attorney before they click Proceed. It was renamed from `needs_confirmation()` to
+`authors_new_text()` so the name says what it computes.
+
+**Version created after apply, never before.** Apply → verify → then the version row. If the apply
+raises or verify hard-fails, no row exists. **There are no orphan versions.**
 
 | Alternative | Rejected because |
 |---|---|
-| **Model returns `requires_confirmation`** | The gate would be inside the model's output, which is exactly what untrusted input can influence. |
+| **Gate on `GENERATIVE_KINDS`** | The shipped-then-retired design above: waved through `delete_claim`, and charged a version per bolded claim. |
+| **Model returns `requires_confirmation`** | Puts the safety gate inside the model's output, which is exactly what untrusted uploaded text can influence. |
 | **Confirm every edit** | Four clicks to bold four claims. Consent fatigue makes the dialog meaningless for the one case that matters. |
-| **Confirm nothing; rely on undo** | The generative case is the one where the old wording matters most, and a chat-driven `setContent` is not reliably one `Cmd+Z`. |
-| **Version *every* AI edit** | Version list fills with "made claim 2 bold". Devalues the feature that Task 1 exists to provide. |
+| **Confirm nothing; rely on undo** | Undo is a per-tab, in-memory stack. A version is durable, and the generative case is where the old wording matters most. |
+| **Version *every* AI edit** | Version list fills with "made claim 2 bold". Devalues the feature Task 1 exists to provide. |
+| **Store `aiConsentedVersion` in the store** | Ambiguous across patents, and a flag that must be cleared fails open when someone forgets. |
 | **Create the version first, then fill it** | Orphan versions on any failure. Strictly worse for a single saved round-trip. |
 
 ### 4.17 Selection is read-only context — never positions on the wire
@@ -740,39 +812,66 @@ characters*.
 | **Ignore selection entirely** | Loses genuinely useful disambiguation for free. |
 | **Route "make selected text italic" through the AI** | An LLM call and up to 30 s for something the editor does in a millisecond. |
 
-### 4.18 Keyword fast-path in front of the router
+### 4.18 Deterministic fast-path in front of `understand` — 3 patterns, not 6
 
-**The decision.** Before the router node makes an LLM call, a small deterministic matcher checks the
-instruction for unambiguous mechanical patterns — `make claim N bold`, `delete claim N`, and the
-like. On a hit, the graph skips straight to the plan/apply branch with the operation already built.
-On a miss (the default), the router LLM call runs as normal.
+**This section previously described "a keyword fast-path in front of the *router*", with six
+patterns.** Two things changed and both are worth stating: there is no router node any more, and two
+of the six patterns were demonstrably wrong.
 
-**Why it's worth it.** These are the instructions users repeat most, and they're the ones where a
-wait for "route: mechanical" is pure latency for a foregone conclusion. That wait is **1.5 s at the
-measured median** (§7), not the 5 s this section first guessed — so the saving is real but modest,
-and PLAN §1.5 row 26 is right that deleting the fast-path would be a two-line change. The fast-path
-turns the most common interactions into a sub-second local operation.
+**There is no router.** A separate `route` node was widened into **`understand`** (PLAN §1.5 row 25).
+Splitting *"what does this person want?"* into "classify it" and "resolve it" costs a second LLM call
+— ~3 s of pure overhead at the measured median — to answer two halves that cannot be answered
+independently: you cannot classify `edit_ops` vs `generate` for *"tighten the last claim"* without
+first working out **which** claim. Routing is a projection of understanding: `intent` is one field of
+`Understanding`. `RouteChoice` was deleted; the node count stayed at seven.
 
-**Why it's safe — and this is the only reason it's allowed.** *The router is not the safety gate.*
-Everything downstream is unchanged: the operation is still schema-validated, still bound to uids
-against the original parse (§4.7), still renumbered deterministically, still run through `verify()`
-(§4.15), and still classified by `GENERATIVE_KINDS` for consent (§4.16) — a fast-path hit produces
-mechanical operations, so it cannot bypass a consent decision it isn't making. The worst case for a
-false positive is a *wrong mechanical edit*, which is visible, one `Cmd+Z` away, and never saved
-without an explicit Save.
+**The fast-path is therefore an *understander*, not a router.** It returns a fully resolved,
+parse-validated `Understanding` — or `None`. Three anchored patterns, covering the mechanical
+instructions users repeat most: bold/italic/strike a numbered claim, delete a numbered claim, and
+the un-format of the first.
 
-Had the router been the thing deciding "is this dangerous?", a regex in front of it would be
-indefensible. It isn't, so it's just a cache.
+**The two deleted patterns, and why.** Patterns 5 and 6 were question and summarise heuristics, and
+they **misrouted compound requests**:
 
-**Kept deliberately dumb.** Narrow anchored patterns, a small number of them, no fuzzy matching, no
-synonym lists. If the pattern set grows to where I can't recite it, it has become a second
-classifier competing with the LLM router — at which point it should be deleted, not extended.
+- *"what is claim 3 about, and make it bold?"* matched the question pattern → `answer` → the edit
+  was silently dropped.
+- *"summarise claim 4 then shorten it"* matched the summarise pattern, because `shorten` was not in
+  its negative lookahead.
+
+A pattern that has to enumerate every verb it must *not* fire on is a classifier, and a bad one.
+Both were deleted rather than patched.
+
+**The three survivors are constrained so they cannot repeat that failure.** Each can only return a
+**fully resolved** understanding or `None`; each **refuses to fire while a clarifying question is
+pending** (so an answer to "which claim?" always reaches the model as an answer, with the question
+quoted); and each **refuses to fire on a claim number the parse does not contain**.
+
+**Why it's safe — and this is the only reason it's allowed.** *The fast-path is not the safety gate.*
+`gate_understanding` runs on **every** path including this one, and only ever moves towards
+`resolved=False`. Downstream is unchanged: schema validation, uid binding against the original parse
+(§4.7), one deterministic renumber, `verify()` (§4.15), and the consent boolean (§4.16) — which the
+fast-path does not and cannot influence, because consent is decided by the client's `consented` flag
+and not by how the instruction was understood. The worst case for a false positive is a *wrong
+mechanical edit*: visible, one `Cmd+Z` away, and never saved without an explicit Save.
+
+**What it actually buys, measured.** ~1.5 s on **exactly two of the four** README acceptance
+instructions, and nothing else (§7). That is a real but modest saving, which is the honest framing —
+and it is why PLAN §1.5 row 26 records that deleting `fast_understanding` and its call site is a
+**two-line change** if it ever becomes a source of doubt. Live evidence that it is working: Step 6's
+walk shows *"Make claim 1 bold"* resolving with `routed_by=keyword` and **zero** LLM calls in
+`understand`.
+
+**Kept deliberately dumb.** Narrow anchored patterns, three of them, no fuzzy matching, no synonym
+lists. If the set grows to where it cannot be recited, it has become a second classifier competing
+with the model — at which point it should be deleted, not extended. It has already shrunk once.
 
 | Alternative | Rejected because |
 |---|---|
-| **Always call the router LLM** | Correct and simple, but pays 5 s for `delete claim 3` — the single most common instruction in the brief's own examples. |
-| **Keyword-only routing (no LLM router)** | Cannot handle "shorten claim 4 a bit" or anything phrased off-script. The LLM router is what makes the system feel like a chat assistant rather than a command line. |
-| **Cache LLM router decisions by instruction hash** | Another store, and a stale-cache class of bug, for a saving a regex already gets. |
+| **Always call `understand`** | Correct and simple, and the fallback if the fast-path is ever doubted. Costs ~1.5 s on the two most-demoed instructions. |
+| **Six patterns (the previous design)** | Two of them misrouted compound requests, dropping an edit the user asked for. Measured, not theorised. |
+| **Keyword-only understanding (no LLM)** | Cannot handle "shorten claim 4 a bit" or anything phrased off-script. The model is what makes this a chat assistant rather than a command line. |
+| **A separate `route` node before `understand`** | Two LLM calls to answer one question, and the halves are not independent. |
+| **Cache decisions by instruction hash** | Another store and a stale-cache bug class, for a saving three regexes already get. |
 
 ---
 
@@ -812,7 +911,7 @@ Claims in this document were checked by running the real tools, not from memory.
 | **Reasoning-token consumption** | `usage.completion_tokens_details.reasoning_tokens` on all 14 calls | **0, every time.** Completion tokens 74–129 |
 | **Per-call latency** | Wall clock over the same 14 calls | **min 1.1 s · median 1.5 s · max 6.7 s** |
 | **Instruction → operation mapping** | 14 real instructions through one planner call each, over Patent 1's outline | **11 correct first try.** Three failures, all traced to our prompts and all fixed by specification changes — PLAN §20.7 |
-| `setContent` signature | Read `@tiptap/core@2.27.1` type declarations | Positional `(content, emitUpdate?, parseOptions?, options?)`; `errorOnInvalidContent` available |
+| `setContent` signature | Read `@tiptap/core@2.27.1` type declarations | Positional `(content, emitUpdate?, parseOptions?, options?)` — we pass `setContent(html, true)`. `errorOnInvalidContent` is available but **deliberately not used** (PLAN §1.1): with no `onContentError` handler it silently drops content from a stored version |
 | TipTap round-trip stability | Ran TipTap + StarterKit over the real seed under jsdom | `parse → getHTML → parse → getHTML` **byte-identical** |
 | `getHTML()` output shape | Same run | Single line, 0 newlines, whitespace collapsed, `<h1>` kept, `<!DOCTYPE>`/`<head>`/`<title>` **stripped** |
 | Seed structure | Same run | Patent 1 → 19 `<p>`, 8 claims, claim 1 spans 5 paragraphs; patent 2 → 9 claims |
@@ -843,15 +942,44 @@ item 4 is closed in part and is now a manual calibration rather than an unknown.
 
 | # | Question | Measured answer |
 |---|---|---|
-| 1 | **Does `gpt-5.2-2025-12-11` accept our exact `parse` call?** | **Yes.** `client.models.retrieve` resolves the id (`owned_by=system`); `client.chat.completions.parse` accepts `response_format=` with our Pydantic models on the **stable** path; `to_strict_json_schema` is clean and no call returned a 400. **The premise of the original wording was wrong: `temperature` is ACCEPTED**, tested at 0.0, 1.0 and 2.0. We send `temperature=0` on the deterministic nodes and omit it on the generative ones (PLAN §21.3) — a choice, not a restriction |
-| 2 | **Is `reasoning_effort` supported, and does `"low"` help latency?** | **Supported; `"low"` is the shipped value.** It cannot help much, because **`reasoning_tokens` was 0 on every one of 14 calls** — there is no reasoning pass to shorten on this model |
+| 1 | **Does `gpt-5.2-2025-12-11` accept our exact `parse` call?** | **Yes.** `client.models.retrieve` resolves the id (`owned_by=system`); `client.chat.completions.parse` accepts `response_format=` with our Pydantic models on the **stable** path; `to_strict_json_schema` is clean. `temperature` is accepted at 0.0, 1.0 and 2.0 — **but only when `reasoning_effort` is absent; see the correction below, which is the single most expensive thing this document got wrong.** We send `temperature=0` on the deterministic nodes and omit it on the generative ones (PLAN §21.2) |
+| 2 | **Is `reasoning_effort` supported, and does `"low"` help latency?** | **Supported, and shipped as `None` anyway.** It cannot help, because **`reasoning_tokens` was 0 on every one of 14 calls** — there is no reasoning pass to shorten on this model — and it is mutually exclusive with the temperatures we do want. See the correction below |
+
+> ### The correction that cost a whole feature — 2026-08-14
+>
+> Items 1 and 2 above were each measured **in isolation**, and each answer is correct in isolation.
+> **The combination was never tried, and the combination is rejected:**
+>
+> | `reasoning_effort` | `temperature` | Result |
+> |---|---|---|
+> | `"low"` | omitted | accepted |
+> | `"low"` | `1.0` | accepted |
+> | absent | `0.0` | accepted |
+> | `"low"` | `0.0` | **400 `Unsupported value: 'temperature' does not support 0.0 with this model`** |
+>
+> The shipped configuration used exactly the failing pair — `openai_reasoning_effort="low"` from
+> `config.py`, `temperature=0` on `understand`/`plan_ops`/`judge` from §21.2 — so **three of the
+> five nodes returned 400 on every live call and the AI feature did not work at all.** It was found
+> by the first manual click-through in Step 6, not by the test suite, because **no test in this
+> repository makes a live API call** and 4Z was the only live gate.
+>
+> **Resolved by defaulting `openai_reasoning_effort` to `None`.** `reasoning_effort` is the one
+> dropped, on this document's own evidence: `reasoning_tokens == 0` means it buys nothing
+> measurable here, whereas `temperature=0` carries §21.2's deterministic/generative split. Guarded
+> by tests **L11** (configuration) and **L12** (the kwargs actually sent), so re-enabling
+> `reasoning_effort` without clearing those temperatures now fails in CI rather than in production.
+>
+> **The lesson is about method, not about OpenAI.** A pre-flight that varies one parameter at a
+> time proves one thing about each parameter and nothing about the request you actually send. The
+> assertion worth making is over the *shipped call*, which is what L12 now is.
 | 3 | **Real end-to-end latency for the worst case** | **Measured: min 1.1 s, median 1.5 s, max 6.7 s per call** (n = 14, real schemas over the seed outline; the 6.7 s outlier carried prior-art text). Five calls at the observed max ≈ 33 s; at the median ≈ 7.5 s. The estimate of ~30 s for the *worst* case was roughly right; the ~5–15 s estimate for a *single* call was an order of magnitude high. The timeout chain is re-derived from this in PLAN §3.4: **12 s per call / 65 s graph deadline / 75 s server / 90 s client** |
 | 4 | **Does the judge threshold discriminate?** | **Partly answered, and it moved the rubric.** The live run showed the model refusing a *required* README example because the requested claim duplicated an existing one — so the judge's original "CONTRADICTION OR DUPLICATION" check would have rejected that same edit on every retry. Duplication is now explicitly **not** a failure; the five checks are otherwise unchanged. Whether the remaining rubric over- or under-fires is still a manual calibration against the seed claims |
 
 Items 1–3 were isolated inside `llm.py` and cost no design change beyond the numbers above. Item 4
 is prompt text in `prompts.py`. **The one thing this exercise proved about the plan's structure is
-that it was right to put every network unknown behind one module: three assumptions were overturned
-and no engine module changed.**
+that it was right to put every network unknown behind one module: four assumptions were overturned —
+three at 4Z and the mutual exclusion above at Step 6 — and no engine module changed. The fix for a
+broken feature was one default value in `config.py`.**
 
 ---
 
