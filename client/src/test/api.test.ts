@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // `axios.create` runs at api.ts module scope, so the stubs have to exist before
 // the module is imported — that is what `vi.hoisted` buys. Two stubs, told apart
-// by the timeout, so "aiEdit uses the long-timeout instance" is testable.
+// by the timeout, so "aiChat uses the long-timeout instance" is testable.
 const { stub, aiStub, configs } = vi.hoisted(() => ({
   stub: { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn() },
   aiStub: { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn() },
@@ -25,7 +25,8 @@ vi.mock("axios", async (importOriginal) => {
 const {
   ApiError,
   BASE_URL,
-  aiEdit,
+  aiApply,
+  aiChat,
   createDocument,
   createVersion,
   getDocument,
@@ -223,17 +224,55 @@ describe("helpers", () => {
   });
 
   it('does not throw when the AI responds with status "error"', async () => {
-    aiStub.post.mockResolvedValue({
-      data: { status: "error", html: null, message: "I could not apply that.", warnings: [] },
-    });
+    const body = {
+      status: "error",
+      message: "I could not apply that.",
+      html: null,
+      proposal: null,
+      verification: null,
+      warnings: [],
+      citations: [],
+      options: [],
+    };
+    aiStub.post.mockResolvedValue({ data: body });
 
     await expect(
-      aiEdit({ html: "<p>a</p>", instruction: "do it", context_text: null, history: [] }),
-    ).resolves.toEqual({
-      status: "error",
-      html: null,
-      message: "I could not apply that.",
-      warnings: [],
+      aiChat({
+        document_id: 1,
+        version_number: 1,
+        html: "<p>a</p>",
+        instruction: "do it",
+        context_text: null,
+        context_name: null,
+        selection: null,
+        history: [],
+        consented: false,
+        pending_question: null,
+        clarify_count: 0,
+      }),
+    ).resolves.toEqual(body);
+    expect(aiStub.post).toHaveBeenCalledWith("/api/ai/chat", expect.anything());
+  });
+
+  it("sends aiApply on the long-timeout instance too", async () => {
+    // Both halves of one interaction must fail with the same words, so /apply shares
+    // the AI client even though it returns in milliseconds.
+    const proposal = {
+      proposal_id: "p1",
+      document_id: 1,
+      version_number: 1,
+      base_sha256: "abc",
+      created_at: "2026-08-14T00:00:00Z",
+      message: "m",
+      summary: ["Delete claim 1."],
+      authors_new_text: false,
+      operations: [],
+    };
+    aiStub.post.mockResolvedValue({
+      data: { status: "no_change", message: "m", html: null, verification: null, warnings: [] },
     });
+
+    await aiApply({ html: "<p>a</p>", proposal });
+    expect(aiStub.post).toHaveBeenCalledWith("/api/ai/apply", { html: "<p>a</p>", proposal });
   });
 });

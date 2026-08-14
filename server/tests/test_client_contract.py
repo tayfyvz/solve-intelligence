@@ -18,22 +18,15 @@ CLIENT = Path(__file__).parents[2] / "client/src"
 API_TS = CLIENT / "api.ts"
 TYPES_TS = CLIENT / "types.ts"
 
-# Task 2 (AI editing via chat) is not implemented: `aiEdit`, `AiEditRequest` and
-# `AiEditResponse` exist on the client but /api/ai/edit does not exist on the
-# server. They are excluded here rather than silently unmatched.
-# DELETE THIS EXCLUSION when the route lands — test_ai_surface_is_still_unbuilt
-# fails the moment it does, so the reminder is enforced, not written down.
-AI_ROUTE = "/api/ai/edit"
-AI_TYPES = frozenset({"AiEditRequest", "AiEditResponse", "ChatTurn"})
-
 # `${id}` in a client URL is `{document_id}` in the OpenAPI path. An explicit map
 # (rather than blanking every placeholder) keeps a renamed path parameter visible.
 PATH_PARAMS = {"id": "document_id", "versionNumber": "version_number"}
 
 # What we expect to extract. A regex that quietly matches nothing would make this
 # whole file pass while guarding nothing, so the counts are asserted too.
-# list, create, get, rename document; list, get, create, update, rename version.
-EXPECTED_ROUTES = 9
+# list, create, get, rename document; list, get, create, update, rename version;
+# POST /api/ai/chat; POST /api/ai/apply.
+EXPECTED_ROUTES = 11
 EXPECTED_TYPES = {
     "DocumentSummary",
     "DocumentDetail",
@@ -44,6 +37,15 @@ EXPECTED_TYPES = {
     "VersionCreate",
     "VersionUpdate",
     "VersionRename",
+    "ChatTurn",
+    "AiSelection",
+    "AiOperation",
+    "AiVerifyReport",
+    "AiProposal",
+    "AiChatRequest",
+    "AiChatResponse",
+    "AiApplyRequest",
+    "AiApplyResponse",
 }
 
 _CALL = re.compile(r"\b\w*[Hh]ttp\.(get|post|put|delete|patch)\(\s*[`\"']([^`\"']*)[`\"']")
@@ -60,8 +62,6 @@ def _client_routes() -> set[tuple[str, str]]:
 
     routes = set()
     for verb, url in calls:
-        if url == AI_ROUTE:
-            continue
         for name in _PLACEHOLDER.findall(url):
             assert name in PATH_PARAMS, (
                 f"{API_TS}: unknown path placeholder ${{{name}}} in {url}. "
@@ -74,11 +74,7 @@ def _client_routes() -> set[tuple[str, str]]:
 def _client_types() -> dict[str, set[str]]:
     """Interface name -> field names, from types.ts."""
     source = _BLOCK_COMMENT.sub("", TYPES_TS.read_text())
-    types = {
-        name: set(_FIELD.findall(body))
-        for name, body in _INTERFACE.findall(source)
-        if name not in AI_TYPES
-    }
+    types = {name: set(_FIELD.findall(body)) for name, body in _INTERFACE.findall(source)}
     for name, fields in types.items():
         assert fields, f"{TYPES_TS}: parsed interface {name} with zero fields — regex drift."
     return types
@@ -89,7 +85,7 @@ def test_client_routes_exist_on_the_server() -> None:
     routes = _client_routes()
 
     assert len(routes) == EXPECTED_ROUTES, (
-        f"Expected {EXPECTED_ROUTES} non-AI routes in {API_TS}, extracted {len(routes)}: "
+        f"Expected {EXPECTED_ROUTES} routes in {API_TS}, extracted {len(routes)}: "
         f"{sorted(routes)}. Update EXPECTED_ROUTES if the client really changed."
     )
     for verb, path in sorted(routes):
@@ -109,7 +105,7 @@ def test_client_types_match_the_server_schemas() -> None:
 
     assert set(types) == EXPECTED_TYPES, (
         f"Extracted {sorted(types)} from {TYPES_TS}, expected {sorted(EXPECTED_TYPES)}. "
-        f"A new wire type must be added to EXPECTED_TYPES (or to AI_TYPES if it is Task 2)."
+        f"A new wire type must be added to EXPECTED_TYPES."
     )
     for name, client_fields in sorted(types.items()):
         assert name in schemas, f"{TYPES_TS} declares {name}, which no server schema matches."
@@ -119,11 +115,3 @@ def test_client_types_match_the_server_schemas() -> None:
             f"On the client but not the server: {sorted(client_fields - server_fields) or 'none'}. "
             f"On the server but not the client: {sorted(server_fields - client_fields) or 'none'}."
         )
-
-
-def test_ai_surface_is_still_unbuilt() -> None:
-    """The tripwire on the exclusion above: Task 2 landing must not stay unguarded."""
-    assert AI_ROUTE not in create_app().openapi()["paths"], (
-        f"{AI_ROUTE} now exists. Remove AI_ROUTE/AI_TYPES from this file so the AI "
-        f"request and response shapes are covered by the contract guard too."
-    )

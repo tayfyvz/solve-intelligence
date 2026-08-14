@@ -8,6 +8,7 @@ have passed either.
 """
 
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -269,13 +270,23 @@ def test_parse_failure_modes_and_log_hygiene(
     assert SECRET not in blob
 
 
-def test_llm_is_the_only_module_that_imports_openai() -> None:
-    """The 4B half of the gate. 4D adds exactly one more importer — routers/ai.py, for
-    `LlmUnavailable` alone — and gate 4D re-runs this with the wider expectation."""
+def test_only_two_modules_import_openai() -> None:
+    """Widened at 4D, exactly as this row's 4B docstring said it would be.
+
+    `llm.py` is the only module that CALLS the SDK. `routers/ai.py` imports it for its
+    EXCEPTION HIERARCHY and nothing else: five distinct user-facing failures are told
+    apart by `isinstance`, and mapping upstream errors onto status codes is a router's
+    job. An exact list, not a count, so a third importer names itself.
+    """
     app_dir = Path(__file__).parents[1] / "app"
     importers = sorted(
         path.relative_to(app_dir).as_posix()
         for path in app_dir.rglob("*.py")
         if "import openai" in path.read_text() or "from openai" in path.read_text()
     )
-    assert importers == ["ai/llm.py"]
+    assert importers == ["ai/llm.py", "routers/ai.py"]
+
+    # And the router really only reads exception classes off it.
+    router_source = (app_dir / "routers/ai.py").read_text()
+    calls = re.findall(r"\bopenai\.(\w+)", router_source)
+    assert all(name.endswith("Error") for name in calls), calls

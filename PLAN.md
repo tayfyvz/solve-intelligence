@@ -6332,11 +6332,12 @@ U1–U21 replace the old `G1`/`G2` router tests. The understanding file is
 |---|---|
 | `server/app/config.py` | extend — 6 new settings |
 | `server/app/schemas.py` | extend — the AI wire models |
-| `server/app/ai/summary.py` | **new**, ~40 lines — `summarise(op) -> str` |
+| ~~`server/app/ai/summary.py`~~ | **already shipped at 4A** with `schemas.py` and `understand.py` — §23.11 row 21 |
 | `server/app/routers/ai.py` | **new**, ~180 lines — imports `content_hash` and `require` from `app.ai.schemas` |
 | `server/app/main.py` | 1 line — `application.include_router(ai.router)` |
 | `server/tests/test_ai_routes.py` | **new** — the R-series |
-| `server/tests/conftest.py` | extend — `ai_settings` and `fake_runner` fixtures |
+| `server/tests/conftest.py` | extend — `fake_runner` (`ai_settings` shipped at 4C) |
+| `client/src/test/api.test.ts` | edit — its one AI row moves from the deleted `aiEdit` to `aiChat`, plus a row for `aiApply` (§23.11) |
 | `server/tests/test_client_contract.py` | edit — delete the Task-2 exclusion, add the new types |
 | `client/src/types.ts` | replace the two `AiEdit*` interfaces with nine |
 | `client/src/api.ts` | replace `aiEdit` with `aiChat` + `aiApply`; **keep** the `aiHttp` timeout at `90_000` and rewrite its now-false comment (§3.4, §26) |
@@ -6757,6 +6758,7 @@ AI caps protect a token budget, which tracks characters. Do not "harmonise" them
 | 9 | `result.status == "clarification"` → `200 needs_clarification`, html None, `options=result.options` | — |
 | 10 | `result.status == "answer"` → `200 answer`, html None, message = the answer, `citations=result.citations` | — |
 | 11 | `result.status == "error"` → `200 error`, html None, `message = result.message` | — |
+| **11b** | **`result.status == "no_change"` → `200 no_change`, html None, `message = result.message`.** **ADDED at 4D (§23.11 row 17).** This is the graph's TERMINAL clarify outcome (§22.6), which carries `CAPABILITY_STATEMENT`. It also has zero operations, so without this row it fell through to step 12 and its sentence was replaced with *"I couldn't find anything to change."* — contradicting §22.3.1's own turn-3 trace and throwing away the only guidance the user gets at the end of a failed conversation | — |
 | 12 | `not result.operations` → `200 no_change`, `"I couldn't find anything to change."` | — |
 | 13 | `len(result.operations) > settings.max_operations` → `200 error`, `message = TOO_MANY_OPERATIONS` (below) | — |
 | 14 | `for op in result.operations: require(op)` | `PlanError` → **200 `error`**, `message = f"This suggestion is no longer valid: {plan_error}"` |
@@ -6961,7 +6963,8 @@ plain error bubble; retrying the identical request cannot help.
 | chat | `proposal` | `consented === false`, any document-changing plan | the plan's own message, e.g. `I can add a dependent claim after claim 2. Review it and choose Apply.` |
 | chat | `answer` | read-only Q&A | the answer text, `citations` populated |
 | chat | `needs_clarification` | the graph asked a question | the question; `options` populated |
-| both | `no_change` | `result.operations == []` | `I couldn't find anything to change.` |
+| chat | `no_change` | the GRAPH returned `status == "no_change"` — the clarify budget is spent (§22.6) | `result.message`, i.e. `CAPABILITY_STATEMENT`. **Not** the sentence below: §23.11 row 17 |
+| both | `no_change` | an `edit` plan the planner emptied (`result.operations == []`) | `I couldn't find anything to change.` |
 | both | `no_change` | operations ran and produced identical bytes (C15) | `Applying that produced no change to the document.` |
 | chat | `error` | `len(result.operations) > max_operations` (step 13) | `That instruction needs too many changes (limit 20). Please ask for a smaller change — one claim at a time works well.` |
 | chat | `error` | `require(op)` raises `PlanError` (step 14) | `This suggestion is no longer valid: {plan_error}` — e.g. `…: The AI's delete_claim instruction was missing: claim_number.` |
@@ -7445,7 +7448,31 @@ stay unguarded" — is discharged the moment the exclusion is removed, and leavi
 `_CALL`'s pattern already matches `aiHttp.post`, so the two new routes are picked up with no regex
 change; the AI paths take no path parameters, so `PATH_PARAMS` is unchanged.
 
-### Exit gate 4D — `test_ai_routes.py` (23 tests)
+#### 23.11 Corrections found while building 4D
+
+Five defects, continuing the numbering from §22.13.
+
+| # | The spec said | The reality | The fix, as shipped |
+|---|---|---|---|
+| **17** | §23.4's numbered order goes 11 (`error`) → 12 (`not result.operations` → `no_change`, *"I couldn't find anything to change."*) | **`GraphResult.status` gained `"no_change"` at §22.8 and §23.4 was never updated.** The graph's terminal clarify outcome also carries zero operations, so it fell through to step 12 and its `CAPABILITY_STATEMENT` — the entire point of P6, and the only guidance a user gets at the end of a failed conversation — was **replaced** with a sentence describing something that did not happen. §22.3.1's turn-3 trace promises `200 {status:"no_change", message: CAPABILITY_STATEMENT}`; the route contradicted it | **Step 11b**, above step 12, returning the graph's own message. Both outcomes carry zero operations, so *ordering* is the only thing that can tell them apart. Found by a test asserting §22.3.1's trace through HTTP |
+| **18** | Gate checklist: *"`grep -rl "import openai\|from openai" server/app/` returns exactly two paths … the router importing **only `LlmUnavailable`** for its status map"* | `LlmUnavailable` is caught inside `node_guard`, never in the router. What the router needs — and what §23.6's own code block imports — is the **exception hierarchy**: `APITimeoutError`, `RateLimitError`, `AuthenticationError`, `PermissionDeniedError`, `NotFoundError`, `APIStatusError`, `APIConnectionError`, `OpenAIError`. The checklist described a different import from the one the same section specifies | The two-path list is unchanged and correct; the *reason* is now stated accurately. `test_llm.py`'s one-file row is **widened in place** to the two-path list — as its own 4B docstring said it would be — plus an assertion that every `openai.X` the router names ends in `Error`, so it can only ever read exception classes off the module |
+| **19** | R15(b): *"`set(AiOperation.model_fields)` contains no field whose name matches `from\|to\|pos\|anchor\|head\|offset`"* | As a **substring** match that is false against correct code: `position` contains `pos`, and `position` is a legitimate field (`before_claims` / `after_claims` — a region by name, not a range) | Two assertions that are both true and stronger: the field set equals the eleven **exactly**, so ANY new field fails and the reviewer reads the list; and no field name **is** one of `{from, to, pos, anchor, head, offset}`, as whole names. The same whole-name check runs over `AiSelection`, which is the type that actually carries a user range |
+| **20** | Two gate greps are written as bare substring searches: `grep -n "Session\|get_db\|crud" routers/ai.py` → no matches, and `grep -n "openai\|langgraph"` over the eight engine modules → empty | Six engine modules **document** invariant 1 in a docstring ("imports neither `openai` nor `langgraph`"), so the second grep is non-empty against code that is correct — and correct *because* of the sentence the grep trips on | The greps mean **import statements**, so they are run as `grep -nE "^(import\|from) (openai\|langgraph)"`. Both are empty. (The router's own comment was reworded to keep the first grep literally clean, since that file is new here) |
+| **21** | The file table lists `server/app/ai/summary.py` as **new** at 4D | It shipped at **4A**, with `schemas.py` and `understand.py` — `test_schemas.py` has covered it since | Nothing to do; the row is stale, not wrong in substance. Recorded so the next reader does not go looking for an unwritten file |
+
+**Two things §23's file list omits, both of which 4D cannot land without:**
+`client/src/test/api.test.ts` references `aiEdit`, which this step deletes — its one AI row is
+rewritten onto `aiChat`, and a second row added for `aiApply` (both halves of one interaction share
+the long-timeout client, and a test is the only thing that keeps that true). And the checklist's
+`grep -n "context_name" … client/src/components/chat/ChatPanel.tsx` **cannot pass at 4D**: that file
+ships at **5C**. Three of the four paths match here; the fourth is a 5C gate row.
+
+### Exit gate 4D — `test_ai_routes.py` (25 rows)
+
+*Shipped as **63 test functions**: R3 and R4's tables parametrise, and three rows were split so the
+failure message names the defect — R11's consent implication, R12's source assertion, and R19's
+three separate properties. Two rows were added: the clamp's P7 case as its own function, and the
+"no sentence on this surface is unspecified" structural check.*
 
 **Every test runs with no API key.** Two fixtures in `conftest.py` make that true:
 
@@ -7494,7 +7521,7 @@ def fake_runner(client):
 | **R20** | `test_the_filename_reaches_the_runner_but_never_the_document` | A request with `context_text` and `context_name="prior.txt"` → `GraphInput.prior_art_name == "prior.txt"`, `GraphInput.prior_art` is the text, and `GraphInput.html` is **byte-identical** to what was sent |
 | **R13** | `test_the_database_is_byte_identical_after_both_routes` | Read every `(version_number, content, updated_at)` row before and after a successful `/chat` **and** a successful `/apply`; assert the tuples are equal. **Invariant 2.** Complemented by a static assertion that neither handler's signature contains a `Session` |
 | **R14** | `test_no_change_outcomes_null_the_html` — parametrised | Three routes to `no_change`: empty operations, a `replace_text` whose needle is absent, and an apply that produces identical output. All three → `html is None` (C15) |
-| **R15** | `test_selection_is_read_only_context` | (a) A request with a `selection` reaches the fake runner with `GraphInput.selection` populated and `GraphInput.html` **unmodified**. (b) `set(AiOperation.model_fields)` contains no field whose name matches `from\|to\|pos\|anchor\|head\|offset` — a structural assertion that **no operation can address a range** |
+| **R15** | `test_selection_is_read_only_context` | (a) A request with a `selection` reaches the fake runner with `GraphInput.selection` populated and `GraphInput.html` **unmodified**. (b) **Corrected at 4D, §23.11 row 19.** `set(AiOperation.model_fields)` equals the eleven names **exactly** (any new field fails, and the reviewer reads the list), and no field name **is** one of `{from, to, pos, anchor, head, offset}` as a WHOLE name — the substring form this row used to specify is false against correct code, because `position` contains `pos` and names a region, not a range. The same whole-name check runs over `AiSelection`, which is the type that actually carries a user range — a structural assertion that **no operation can address one** |
 | **R16** | `test_history_is_truncated_not_rejected` | 20 turns in the request → 200, and the runner receives exactly `max_history_turns * 2` turns, oldest first. A long conversation must never become a 422 |
 | **R17** | `test_answer_status_carries_no_html_and_no_proposal` | `status="answer"` → 200 `answer`, the answer text in `message`, `html is None`, `proposal is None`, `citations` echoes the runner's list |
 | **R18** | `test_client_contract` (existing file, updated) | `test_client_routes_exist_on_the_server` and `test_client_types_match_the_server_schemas` pass with `EXPECTED_ROUTES = 11` and the nine AI types; `AI_ROUTE`, `AI_TYPES` and `test_ai_surface_is_still_unbuilt` are **deleted** |
@@ -7507,22 +7534,27 @@ Gate checklist:
 - [ ] `uv run pytest` green, `uv run ruff check .` clean, `uv run ruff format --check .` clean
 - [ ] `npm run build` passes (tsc catches any `types.ts` / `api.ts` mismatch)
 - [ ] **No `server/data/app.db` after the test run**
-- [ ] `grep -n "Session\|get_db\|crud" server/app/routers/ai.py` → **no matches**
-- [ ] `grep -n "openai\|langgraph" server/app/ai/document.py server/app/ai/outline.py
+- [ ] `grep -nE "^(import|from) (sqlalchemy|app\.db|app\.crud)" server/app/routers/ai.py` → **empty**, and `grep -n "Session\|get_db\|crud"` likewise (§23.11 row 20 — the greps mean IMPORTS, and a bare substring search trips on prose that documents the very rule it is checking)
+- [ ] `grep -nE "^(import|from) (openai|langgraph)" server/app/ai/document.py server/app/ai/outline.py
       server/app/ai/operations.py server/app/ai/apply.py server/app/ai/verify.py
       server/app/ai/schemas.py server/app/ai/understand.py server/app/ai/summary.py` → **empty**
+      (**corrected at 4D, §23.11 row 20**: as a bare substring search this row is non-empty against
+      CORRECT code, because six of the eight document invariant 1 in their own docstrings)
       (invariants 1 and 10, re-checked by hand as well as by T5). **All eight engine modules, not
       six** — `understand.py` and `summary.py` are named in §1.5 row 5's list and covered by T5's
       parametrisation, and were missing from this hand-check, so the manual gate was weaker than the
       automated one it exists to cross-check
 - [ ] **`grep -rl "import openai\|from openai" server/app/` returns exactly two paths:
-      `server/app/ai/llm.py` and `server/app/routers/ai.py`** — the router importing only
-      `LlmUnavailable` for its status map, with a comment on that import stating that it calls
-      nothing and that invariant 1 concerns `app/ai/document.py` and the engine modules. Gate 4B
+      `server/app/ai/llm.py` and `server/app/routers/ai.py`** — the router importing the SDK's
+      **exception hierarchy** for its status map (**corrected at 4D, §23.11 row 18**: this row used
+      to say `LlmUnavailable`, which `node_guard` catches and the router never sees), with a comment
+      on that import stating that it calls nothing and that invariant 1 concerns
+      `app/ai/document.py` and the engine modules. Gate 4B
       asserts the one-file state at 4B; this asserts the two-file state at 4D. Neither gate can be
       satisfied by the other's list, which is why they are separate
-- [ ] **`grep -n "context_name" server/app/schemas.py server/app/routers/ai.py client/src/types.ts
-      client/src/components/chat/ChatPanel.tsx` → a match in all four.** The field is passed by the
+- [ ] **`grep -n "context_name" server/app/schemas.py server/app/routers/ai.py client/src/types.ts`
+      → a match in all three.** The fourth path in this row's original form,
+      `client/src/components/chat/ChatPanel.tsx`, **ships at 5C** and is a 5C gate row (§23.11). The field is passed by the
       handler and sent by the client; a missing declaration is a 500 on every request, so it is
       checked mechanically
 - [ ] `grep -n "GENERATIVE_KINDS" server/app/routers/ai.py` shows it used **only** to compute
@@ -9812,11 +9844,11 @@ the two can be checked against each other mechanically. The phases are listed in
 | **4Z** pre-flight | — (a script, **deliberately not a test**) | 0 | **Yes — and it is the only thing that is** | 213 |
 | **4B** prompts + llm | `L1`–`L5`, `L6a`, `L6b`, **`L6c`**, `L7`–`L9` | 11 | No (stub client) | 224 |
 | **4C** graph + understanding | `U1`–`U3`, `U5`–`U7`, `U7b`, `U9`, `U10`, `U13`–`U17` + the no-plan companion (§22.13 row 13), `G3`–`G19` | **32** | No (fake bundle) | 256 |
-| **4D** routes | `R1`–`R23` | 23 | No (`dependency_overrides`) | 279 |
-| **5A** `.txt` drop | `F1`–`F8` | 8 | No | 287 |
-| **5B** selection | `X1`–`X9` | 9 | No | 296 |
-| **5C** chat panel | `CP-01`–`CP-31` | 31 | No | 327 |
-| **Correction — three gate tests defined as checklist bullets, not table rows** | `E1` (gate 2C), `D1`, `D2` (gate 2D) | **+3** | No | **330** |
+| **4D** routes | `R1`–`R23`, + the clamp's P7 case and the unspecified-copy check (§23.11) | **25** | No (`dependency_overrides`) | 281 |
+| **5A** `.txt` drop | `F1`–`F8` | 8 | No | 289 |
+| **5B** selection | `X1`–`X9` | 9 | No | 298 |
+| **5C** chat panel | `CP-01`–`CP-31` | 31 | No | 329 |
+| **Correction — three gate tests defined as checklist bullets, not table rows** | `E1` (gate 2C), `D1`, `D2` (gate 2D) | **+3** | No | **332** |
 
 **`VF14` and `VF18` are counted in 4A and 3C, not in 3D.** They keep their `VF` ids and their home in
 `test_verify.py`; what moved is which gate has to be green before the commit lands, because one needs
@@ -9834,15 +9866,15 @@ absorb a bookkeeping fix is how the two disagreeing totals in C26 happened in th
 checklist bullet is not counted by any mechanical pass over this document.** If a future gate needs a
 bullet-defined test, give it a table row instead.
 
-**Split:** backend **47 → 189** (+142); frontend **90 → 141** (+51, of which 48 are new Task-2 rows
-and 3 are the previously-uncounted `E1`/`D1`/`D2`). **Total 330 gate rows, of which zero require
+**Split:** backend **47 → 191** (+144); frontend **90 → 141** (+51, of which 48 are new Task-2 rows
+and 3 are the previously-uncounted `E1`/`D1`/`D2`). **Total 332 gate rows, of which zero require
 an API key.** *(325 → 329: **+3** for the bullet-defined gate tests the extraction missed, and **+1**
 for **`G19`**, the test of `recursion_limit` and its `GraphRecursionError` copy — a bound §3.4
 presented as one of three independently sufficient mechanisms, with a user-facing sentence, that
 nothing executed. 329 → 330 at 4C: **+1** for the no-plan companion row, §22.13 row 13.)*
 
-**Rows are not collected tests, and the gap is parametrisation.** 4C's 32 rows ship as 66 test
-functions and the whole backend suite collects **426** after 4C. Both numbers are true and they
+**Rows are not collected tests, and the gap is parametrisation.** 4C's 32 rows ship as 66 test functions,
+4D's 25 ship as 63, and the whole backend suite collects **488** after 4D. Both numbers are true and they
 measure different things; this section counts rows, because a row is a promise and a function is
 an implementation detail of how that promise is asserted.
 

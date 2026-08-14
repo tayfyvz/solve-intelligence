@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     max_history_turns: int = 3
 
     # --- AI, Task 2 ------------------------------------------------------
+    max_selection_chars: int = 8_000
+    # The uploaded file's NAME, not its text. It is interpolated into the prompt,
+    # so it is untrusted prompt input and is capped like every other string that
+    # gets there. 120 is longer than any real filename and short enough that it
+    # cannot carry instructions.
+    max_context_name_chars: int = 120
+    max_operations: int = 20
     # PER LLM CALL. Passed as `timeout=` on every chat.completions.parse. 1.79x the
     # slowest of the 14 calls 4Z measured (max 6.7 s, median 1.5 s — PLAN §20.7).
     ai_node_timeout_seconds: float = 12.0
@@ -48,6 +55,10 @@ class Settings(BaseSettings):
     # HUNG-SOCKET BACKSTOP with no reachable path in the legitimate configuration — the
     # full derivation, and why that is correct rather than a gap, is in PLAN §3.4.
     ai_graph_deadline_seconds: float = 65.0
+    # asyncio.wait_for around the whole run. Strictly above the graph deadline. Note
+    # that it releases the REQUEST, not the worker thread (PLAN §3.4 point 3, §28.3).
+    ai_request_timeout_seconds: float = 75.0
+    proposal_ttl_seconds: int = 900
     # None => the kwarg is omitted entirely. 4Z measured reasoning_effort="low" as
     # ACCEPTED on gpt-5.2-2025-12-11, so "low" is the shipped value; it stays a setting
     # because an unsupported kwarg would be a 400 on every single call.

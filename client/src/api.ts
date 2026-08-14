@@ -1,8 +1,10 @@
 import axios, { type AxiosResponse } from "axios";
 
 import type {
-  AiEditRequest,
-  AiEditResponse,
+  AiApplyRequest,
+  AiApplyResponse,
+  AiChatRequest,
+  AiChatResponse,
   DocumentCreate,
   DocumentDetail,
   DocumentPage,
@@ -22,8 +24,10 @@ import type {
 export const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
 const http = axios.create({ baseURL: BASE_URL, timeout: 15_000 });
-// The AI route waits on OpenAI; the server gives up at 60 s, so the client must
-// wait longer than that or it reports a timeout for a request that succeeded.
+// PLAN §3.4: the server's own budget is 75 s (ai_request_timeout_seconds). The client
+// must wait longer than that, or it reports a timeout for a request that succeeded.
+// 90_000 is UNCHANGED from Task 1 — only the reason is new. The old comment said
+// "> the server's 60 s", which stopped being true the moment the graph landed.
 const aiHttp = axios.create({ baseURL: BASE_URL, timeout: 90_000 });
 
 /**
@@ -147,9 +151,32 @@ export function renameVersion(
 }
 
 /**
- * `status: "error"` is a 200 with a message, not an exception — this throws only
- * on transport or HTTP failures.
+ * Run 1. Returns one of six outcomes; `status: "error"` is a 200 with a message,
+ * not an exception, so this throws only on transport or HTTP failures.
+ *
+ * `body.html` MUST be `editor.getHTML()`, never a version's stored `content`:
+ * the server hashes exactly these bytes into `proposal.base_sha256`, and
+ * `aiApply` re-reads `getHTML()`. Hashing two different normalisations of the
+ * same document makes every proposal 409.
  */
-export function aiEdit(body: AiEditRequest): Promise<AiEditResponse> {
-  return request<AiEditResponse>(() => aiHttp.post("/api/ai/edit", body));
+export function aiChat(body: AiChatRequest): Promise<AiChatResponse> {
+  return request<AiChatResponse>(() => aiHttp.post("/api/ai/chat", body));
 }
+
+/**
+ * Run 2. Deterministic and offline: it never reaches OpenAI, so it works with no
+ * API key configured. A 409 means the document drifted since the proposal was
+ * written — discard the proposal and ask again, never retry this call.
+ *
+ * Uses aiHttp (90 s) rather than http (15 s) for one reason only: consistency of
+ * the error text the user sees for the two halves of one interaction. /apply is
+ * CPU-bound and returns in milliseconds. Say so, or the next reader "fixes" it.
+ */
+export function aiApply(body: AiApplyRequest): Promise<AiApplyResponse> {
+  return request<AiApplyResponse>(() => aiHttp.post("/api/ai/apply", body));
+}
+
+/** Transient upstream failures: the same bytes are worth sending again unchanged.
+ *  NOT 503 (configuration — a retry cannot help) and NOT 409 (the document moved —
+ *  the proposal must be re-asked, not retried). */
+export const RETRYABLE_STATUSES: ReadonlySet<number> = new Set([429, 502, 504]);

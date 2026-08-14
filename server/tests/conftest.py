@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 
+from app.ai.graph import GraphInput, GraphResult, get_ai_runner
 from app.config import get_settings
 from app.db import Base, create_db_engine
 from app.main import create_app
@@ -27,6 +28,33 @@ def ai_settings(monkeypatch: pytest.MonkeyPatch):
 
     yield _apply
     get_settings.cache_clear()
+
+
+@pytest.fixture
+def fake_runner(client: TestClient):
+    """Install a canned `GraphResult` — or an exception to raise — as the graph.
+
+    Substitutes through the REAL HTTP stack via `dependency_overrides`, so the status
+    codes in PLAN §23.6 are genuinely exercised, and it never touches an import path.
+    `calls` records every `GraphInput` the route built, which is how the clamp, the
+    history truncation and the filename are asserted from the outside.
+    """
+    calls: list[GraphInput] = []
+
+    def _install(result: GraphResult | None = None, raises: Exception | None = None):
+        def runner(graph_input: GraphInput) -> GraphResult:
+            calls.append(graph_input)
+            if raises is not None:
+                raise raises
+            assert result is not None, "fake_runner needs a result or an exception"
+            return result
+
+        client.app.dependency_overrides[get_ai_runner] = lambda: runner
+        return calls
+
+    _install.calls = calls  # type: ignore[attr-defined]
+    yield _install
+    client.app.dependency_overrides.clear()
 
 
 @pytest.fixture
