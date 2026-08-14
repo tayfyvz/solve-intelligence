@@ -545,9 +545,16 @@ number in this section.** (It was previously scheduled at 3D, which cannot execu
 does not exist yet. 3C is still comfortably ahead of the deadline below.) If the measured cost
 exceeds 2.0 s, exactly one of two levers is pulled, and the choice is recorded here:
 
+**MEASURED at 3C, 2026-08-14: `0.255 s`** — 200 161 characters, 898 claims, through
+`parse → build_outline → apply_plan(3-op plan: format + delete + document-wide replace_text)
+→ verify`. That is **7.8× inside the 2.0 s reservation**, so the first row of the table below
+applies and no lever is pulled; the derivation in STEP 2 stands as written. (For scale: the
+same path on the 2.7 KB seeds is ~25 ms, so the cost is close to linear in document size even
+with the O(claims × refs) remap doing real work on 898 claims.)
+
 | Measured at the cap | Lever |
 |---|---|
-| ≤ 2.0 s | none — the derivation above stands |
+| ≤ 2.0 s | none — the derivation above stands **← this is the measured outcome** |
 | 2.0–5.0 s | lower the **AI-path** cap to the largest size that fits in 2.0 s (the *save* path keeps `max_content_bytes = 1_000_000`; they are different limits and always were) |
 | > 5.0 s | widen the gap: re-run STEP 4 with the measured `B`, i.e. `D ≥ 5P + B + 1`, and either lower `P` or raise `D` and `W` together — keeping every inequality strict and `C` fixed at 90 s |
 

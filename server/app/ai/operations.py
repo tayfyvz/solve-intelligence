@@ -33,6 +33,7 @@ from app.ai.document import (
     Block,
     Claim,
     ParsedDocument,
+    all_blocks,
     block_text,
     escape_text,
 )
@@ -70,15 +71,6 @@ def next_uid(doc: ParsedDocument) -> int:
 
 def _find(doc: ParsedDocument, uid: int | None) -> Claim | None:
     return next((c for c in doc.claims if c.uid == uid), None) if uid is not None else None
-
-
-def _all_blocks(doc: ParsedDocument) -> list[Block]:
-    blocks = list(doc.preamble)
-    if doc.claims_heading is not None:
-        blocks.append(doc.claims_heading)
-    blocks += [b for c in doc.claims for b in c.blocks]
-    blocks += doc.postamble
-    return blocks
 
 
 def _has_inline_marks(block: Block) -> bool:
@@ -269,7 +261,7 @@ def replace_text(doc: ParsedDocument, find: str, replace: str, warnings: list[st
     needle, sub = escape_text(find), escape_text(replace)
     hits = 0
     split = False
-    for block in _all_blocks(doc):
+    for block in all_blocks(doc):
         if needle in block.html:
             hits += block.html.count(needle)
             block.html = block.html.replace(needle, sub)

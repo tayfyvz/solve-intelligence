@@ -25,7 +25,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from app.ai.document import REF_RE, Claim, ParsedDocument, block_text, parse, render
+from app.ai.document import REF_RE, Claim, ParsedDocument, all_blocks, block_text, parse, render
 
 MAX_ERRORS = 10
 MAX_NUMBERS_IN_MESSAGE = 20
@@ -196,9 +196,8 @@ def _where(kind: str, ref: str) -> str:
 
 
 def _plain_text(doc: ParsedDocument) -> str:
-    blocks = [*doc.preamble, *([doc.claims_heading] if doc.claims_heading else []), *doc.postamble]
-    blocks += [b for c in doc.claims for b in c.blocks]
-    return " ".join(" ".join(block_text(b) for b in blocks).casefold().split())
+    joined = " ".join(block_text(b) for b in all_blocks(doc))
+    return " ".join(joined.casefold().split())
 
 
 def _quote_found(doc: ParsedDocument, quote: str) -> bool:

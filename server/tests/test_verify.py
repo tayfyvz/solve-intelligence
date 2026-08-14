@@ -9,6 +9,8 @@ deterministic budget) is a 3C one — both need code that does not exist yet. Th
 not reused and not renumbered.
 """
 
+import time
+
 import pytest
 
 from app.ai.document import parse
@@ -298,6 +300,59 @@ def test_check_citations_flags_a_quote_that_is_not_in_the_document() -> None:
     assert check_citations(doc, [("claim", "2", "the housing is made of titanium")]) != []
     # prior_art quotes are never checked here: the uploaded text is not in the document.
     assert check_citations(doc, [("prior_art", "US 1", "anything at all")]) == []
+
+
+def test_deterministic_budget_at_the_input_cap(capsys: pytest.CaptureFixture) -> None:
+    """VF18 — a 3C gate row, because the path it times runs through `apply_plan`.
+
+    PLAN §3.4 reserves 2.0 s for ALL deterministic work in a run, and the whole timeout
+    chain — the per-call ceiling, the graph deadline, the request timeout, the client's
+    budget — is derived from that reservation holding. The figure originally came from
+    the 2.7 KB seeds, where the real cost is ~25 ms. The AI path accepts 200 000
+    characters, 70x that, and the cross-reference remap is O(claims x refs). A budget
+    measured 70x below the cap is not a budget.
+
+    This is a budget test, not a benchmark: one run, a generous threshold, and if it ever
+    fails the fix is already written down in §3.4 — lower the AI-path cap, or widen the
+    deadline gap.
+    """
+    from app.ai.apply import apply_plan
+    from app.ai.outline import build_outline
+    from app.ai.schemas import Op
+    from app.config import get_settings
+
+    cap = get_settings().max_html_chars
+    body = (
+        "The wireless optogenetic device of claim 1, wherein the body is made of "
+        "biocompatible materials and is transparent and lightweight, and wherein the "
+        "light transducing materials are lanthanide-doped nanoparticles."
+    )
+    claims = []
+    number = 1
+    html = "<h1>Claims</h1>"
+    while len(html) < cap:
+        claims.append(f"<p>{number}. {body}</p>")
+        html = "<h1>Claims</h1>" + "".join(claims)
+        number += 1
+    assert len(html) >= cap and number > 100  # real work for the remap to do
+
+    plan = [
+        Op(kind="format_claim", claim_number=2, mark="bold", enabled=True),
+        Op(kind="delete_claim", claim_number=3),
+        Op(kind="replace_text", find="lightweight", replace="light"),
+    ]
+
+    start = time.perf_counter()
+    doc = parse(html)
+    build_outline(doc)
+    result = apply_plan(html, plan)
+    verify(html, result.html or html, expected_claims=None)
+    elapsed = time.perf_counter() - start
+
+    with capsys.disabled():
+        print(f"\nVF18: {len(html):,} chars, {len(doc.claims)} claims -> {elapsed:.3f}s")
+    assert result.html is not None, result.report.errors
+    assert elapsed < 2.0, f"the §3.4 deterministic budget is blown: {elapsed:.3f}s"
 
 
 def test_check_citations_and_verified_refs() -> None:

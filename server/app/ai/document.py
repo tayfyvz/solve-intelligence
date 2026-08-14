@@ -121,6 +121,16 @@ def block_text(block: Block) -> str:
     return " ".join(BeautifulSoup(block.html, "html.parser").get_text(" ").split())
 
 
+def all_blocks(doc: ParsedDocument) -> list[Block]:
+    """Every block in the document, in render order. Defined once, here, because three
+    modules walk the whole document and three private copies of this would drift."""
+    blocks = list(doc.preamble)
+    if doc.claims_heading is not None:
+        blocks.append(doc.claims_heading)
+    blocks += [b for c in doc.claims for b in c.blocks]
+    return blocks + doc.postamble
+
+
 def escape_text(text: str) -> str:
     """Escape LLM-authored PLAIN text for insertion into Block.html. Exactly once.
 
