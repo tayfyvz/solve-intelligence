@@ -13,6 +13,10 @@ dependencies = [
     "beautifulsoup4>=4.12,<5.0",
     "nh3>=0.3.0,<0.4",
     "pydantic-settings>=2.6,<3.0",
+    # Pinned below 2 because the graph API IS the design (PLAN §22). A major bump is a
+    # rewrite, not an upgrade. 21 transitive packages, +17 MiB of image layer —
+    # measured, and justified in TECHNOLOGY §2.5 and PLAN §1.4.
+    "langgraph>=1.2,<2.0",
 ]
 
 # PEP 735 group, not [project.dependencies]: the Dockerfile builds with
