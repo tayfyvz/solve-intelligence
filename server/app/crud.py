@@ -97,6 +97,7 @@ def list_versions(
         select(
             DocumentVersion.version_number,
             DocumentVersion.name,
+            DocumentVersion.source,
             DocumentVersion.created_at,
             DocumentVersion.updated_at,
         )
@@ -207,7 +208,11 @@ def rename_document(db: Session, document: Document, title: str) -> Document:
 
 
 def create_version(
-    db: Session, document: Document, content: str, name: str | None = None
+    db: Session,
+    document: Document,
+    content: str,
+    name: str | None = None,
+    source: str = "user",
 ) -> DocumentVersion:
     """Reading MAX+1 and then inserting is a race: two tabs saving at the same
     moment compute the same number and the unique constraint rejects one of them.
@@ -224,6 +229,7 @@ def create_version(
             version_number=number,
             name=name if name is not None else _auto_version_name(db, document.id, number),
             content=content,
+            source=source,
         )
         db.add(version)
         try:

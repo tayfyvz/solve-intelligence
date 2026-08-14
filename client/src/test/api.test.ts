@@ -153,6 +153,7 @@ describe("helpers", () => {
     expect(stub.post).toHaveBeenCalledWith("/api/documents/7/versions", {
       content: "<p>new</p>",
       name: null, // null, not omitted: the server names it "Version {n}"
+      source: "user", // default: only ChatPanel ever passes "ai"
     });
 
     await updateVersion(7, 3, "<p>edited</p>");

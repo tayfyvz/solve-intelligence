@@ -54,6 +54,10 @@ class VersionSummary(BaseModel):
 
     version_number: int
     name: str
+    # "user" for a plain save/import; "ai" for the confirmed result of an AI-proposed
+    # edit. Drives whether the client treats further AI edits on this version as
+    # pre-consented (apply in place) rather than creating a new version.
+    source: Literal["user", "ai"]
     created_at: datetime
     updated_at: datetime
 
@@ -111,6 +115,7 @@ class VersionRead(BaseModel):
     version_number: int
     name: str
     content: str
+    source: Literal["user", "ai"]
     created_at: datetime
     updated_at: datetime
 
@@ -137,6 +142,9 @@ class VersionCreate(BaseModel):
 
     content: str
     name: VersionName | None = None
+    # "user" (the default) for a plain "Save as new version"; "ai" only when the client
+    # is recording the confirmed result of an AI-proposed edit.
+    source: Literal["user", "ai"] = "user"
 
 
 class VersionUpdate(BaseModel):

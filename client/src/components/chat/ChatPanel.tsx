@@ -19,44 +19,6 @@ export interface ChatPanelProps {
   versionNumber: number | null;
 }
 
-/**
- * The document AND version for which the user has approved AI editing.
- *
- * A COMPOSITE KEY, not a boolean and not a bare version number. Version numbers are only
- * unique within a patent, so `3` alone would carry consent granted on patent 1 across to
- * patent 2. Compared for equality against the live store — consent is therefore DERIVED,
- * never "reset", which is why nothing outside this component has to remember to clear it.
- *
- * NEVER persisted to localStorage or sessionStorage. A persisted consent would mean that
- * opening a tab silently authorises unreviewed generative text into a legal document with
- * no human in the loop that session. "Why isn't this remembered?" is a feature, not a bug.
- */
-interface ConsentKey {
-  documentId: number;
-  versionNumber: number;
-}
-
-/**
- * The single predicate. Read it out loud: "the user approved AI editing for exactly the
- * document and version that are open right now."
- *
- * It is a pure function of props + state, so there is no code path that can leave a stale
- * `true` behind — because there is no `true` stored anywhere.
- */
-function isConsented(
-  consent: ConsentKey | null,
-  documentId: number | null,
-  versionNumber: number | null,
-): boolean {
-  return (
-    consent !== null &&
-    documentId !== null &&
-    versionNumber !== null &&
-    consent.documentId === documentId &&
-    consent.versionNumber === versionNumber
-  );
-}
-
 const DRIFT_MESSAGE =
   "You edited the document while the AI was working, so the change was not applied. " +
   "Ask again and it will use your current text.";
@@ -74,9 +36,20 @@ const FILE_SUGGESTIONS = [
 /** How long a clicked citation stays highlighted. */
 const CITATION_MS = 2_500;
 
+/** Leading "undo"/"revert" only — matches the chat instruction, not prose that mentions it. */
+const UNDO_RE = /^\s*(undo|revert)\b/i;
+
 export default function ChatPanel({ documentId, versionNumber }: ChatPanelProps) {
   const editor = useDocumentStore((s) => s.editor);
   const saveAsNewVersion = useDocumentStore((s) => s.saveAsNewVersion);
+  /**
+   * Who created the OPEN version, per the server's stored `source` field. "ai" means the
+   * user already reviewed and confirmed one AI edit to arrive at this exact version, so
+   * every further AI edit on it applies straight in rather than proposing again — and,
+   * because this is read from the store rather than kept in local state, that stays true
+   * across a reload or remount, not just for the rest of this browser session.
+   */
+  const versionOrigin = useDocumentStore((s) => s.versionOrigin);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -88,7 +61,6 @@ export default function ChatPanel({ documentId, versionNumber }: ChatPanelProps)
   /** The clarification loop. Both reset on any non-clarification outcome. */
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [clarifyCount, setClarifyCount] = useState(0);
-  const [consent, setConsent] = useState<ConsentKey | null>(null);
 
   const nextId = useRef(1);
   const alive = useRef(true);
@@ -104,8 +76,17 @@ export default function ChatPanel({ documentId, versionNumber }: ChatPanelProps)
   const citationTimer = useRef<number | null>(null);
   const lastInstruction = useRef("");
   const previousVersion = useRef(versionNumber);
+  /**
+   * The one thing "undo" can act on: the HTML the editor held immediately before the most
+   * recent AI-applied change, and the version it belongs to. Session-only, single-step —
+   * there is no persisted AI audit trail (DESIGN.md future work) and the six ops in
+   * operations.py have no inverse, so a real undo stack would need new DB plumbing this
+   * feature does not have. Cleared after one use; a second "undo" in a row falls through to
+   * the explanatory message rather than pretending there is more history to walk back.
+   */
+  const lastApplied = useRef<{ html: string; versionNumber: number } | null>(null);
 
-  const consented = isConsented(consent, documentId, versionNumber);
+  const consented = documentId !== null && versionNumber !== null && versionOrigin === "ai";
 
   function build(role: ChatMessage["role"], init: Partial<ChatMessage> & { text: string }) {
     return {
@@ -191,6 +172,32 @@ export default function ChatPanel({ documentId, versionNumber }: ChatPanelProps)
     const verNum = versionNumber;
     if (docId === null || verNum === null) {
       pushAssistant({ tone: "error", text: "There is no open document to edit." });
+      return;
+    }
+
+    // ── the client-side undo fast-path ────────────────────────────────────────────────
+    // Never leaves the browser, and runs before anything else touches the instruction: an
+    // undo request is not something to plan, it is something to look up.
+    if (UNDO_RE.test(instruction)) {
+      pushUser(instruction);
+      setInput("");
+      const target = lastApplied.current;
+      if (target && target.versionNumber === verNum) {
+        if (!applyHtml(ed, target.html)) return;
+        lastApplied.current = null; // single-step: nothing further back to walk to
+        pushAssistant({
+          tone: "system",
+          text: "Reverted your last AI change. Not saved yet — use Save in the top bar to keep this, or make another change.",
+        });
+      } else {
+        pushAssistant({
+          tone: "system",
+          text:
+            "I can only undo the most recent AI change from this session, and there isn't one " +
+            "tracked for this version. Cmd+Z (or the Undo button in the toolbar) still works if " +
+            "you haven't reloaded, or switch versions in the top bar if the change was already saved.",
+        });
+      }
       return;
     }
 
@@ -321,6 +328,7 @@ export default function ChatPanel({ documentId, versionNumber }: ChatPanelProps)
       // having already pushed its own error bubble. Ignoring it pushed a success claim
       // immediately underneath that error, with the document unchanged.
       if (!applyHtml(s.editor, res.html)) return;
+      lastApplied.current = { html: sentHtml, versionNumber: verNum };
 
       pushAssistant({
         text: `${res.message}\n\nApplied to version ${verNum}. Not saved yet — use Save in the top bar when you are happy with it.`,
@@ -439,6 +447,7 @@ export default function ChatPanel({ documentId, versionNumber }: ChatPanelProps)
       if (!ok) {
         // consent is deliberately NOT granted: no restore point exists.
         resolveProposal(messageId, "applied_unsaved");
+        lastApplied.current = { html: sentHtml, versionNumber: verNum };
         pushAssistant({
           tone: "error",
           text: `The edit was applied but could not be saved: ${after.error} Your changes are still in the editor — use "Save as new version" in the top bar to keep them.`,
@@ -469,8 +478,13 @@ export default function ChatPanel({ documentId, versionNumber }: ChatPanelProps)
 
       // after.versionNumber is non-null here: saveAsNewVersion returned true, which is only
       // reachable from the branch that set it. Narrowed rather than asserted.
+      // Consent itself needs no action here: saveAsNewVersion already set the store's
+      // `versionOrigin` to "ai" atomically with `versionNumber`, so `consented` is already
+      // true by the time this component re-renders.
       const saved = after.versionNumber;
-      if (saved !== null) setConsent({ documentId: docId, versionNumber: saved });
+      if (saved !== null) {
+        lastApplied.current = { html: sentHtml, versionNumber: saved };
+      }
       pushAssistant({
         text: `${res.message}\n\nSaved as version ${saved}. Further AI changes will apply straight away — switch versions in the top bar to go back.`,
         warnings: res.warnings,
@@ -546,7 +560,9 @@ export default function ChatPanel({ documentId, versionNumber }: ChatPanelProps)
     // delete the instruction they typed. They waited 20 seconds and would receive nothing,
     // not even their own question. One bubble, in the FRESH transcript, is the whole fix.
     setMessages(inFlight.current ? [build("assistant", { tone: "system", text: DISCARDED_MESSAGE })] : []);
-    setConsent(null); // belt, not braces — the key comparison in isConsented() is the real guard
+    // No consent state to clear here: `consented` is derived from the store's
+    // `versionOrigin`, which this same navigation already updated (selectVersion/
+    // selectDocument set it from the freshly fetched version's `source`).
     setPendingQuestion(null);
     setClarifyCount(0);
     setRange(null);

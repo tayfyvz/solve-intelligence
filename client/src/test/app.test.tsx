@@ -83,6 +83,7 @@ function versionPage(numbers: number[], extra: Partial<VersionPage> = {}): Versi
     .map((n) => ({
       version_number: n,
       name: `Version ${n}`,
+      source: "user" as const,
       created_at: STAMP,
       updated_at: STAMP,
     }));
@@ -95,6 +96,7 @@ function version(id: number, n: number, content = `<p>doc ${id} v${n}</p>`): Ver
     version_number: n,
     name: `Version ${n}`,
     content,
+    source: "user",
     created_at: STAMP,
     updated_at: STAMP,
   };
@@ -403,7 +405,8 @@ describe("App shell", () => {
     await waitFor(() => expect(store().versionNumber).toBe(2));
     // The third argument is the version name, which only ChatPanel ever supplies;
     // `null` is what `createVersion` defaulted to before it was threaded through.
-    expect(createVersion).toHaveBeenCalledWith(1, "<p>live</p>", null);
+    // The fourth is the source, defaulted to "user" for the Banner's own button.
+    expect(createVersion).toHaveBeenCalledWith(1, "<p>live</p>", null, "user");
     // The server's sanitised echo, reached by remount rather than a prop write.
     await waitFor(() => expect(screen.getByTestId("editor").textContent).toBe("<p>created v2</p>"));
     expect(screen.queryByText("Unsaved changes")).toBeNull();

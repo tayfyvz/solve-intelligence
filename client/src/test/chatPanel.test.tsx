@@ -97,21 +97,27 @@ type FakeEditor = ReturnType<typeof fakeEditor>;
 
 const asEditor = (fake: FakeEditor) => fake as unknown as Editor;
 
-function versionRead(n: number, content = "<p>applied</p>"): VersionRead {
+function versionRead(
+  n: number,
+  content = "<p>applied</p>",
+  source: "user" | "ai" = "user",
+): VersionRead {
   return {
     document_id: 1,
     version_number: n,
     name: `Version ${n}`,
     content,
+    source,
     created_at: STAMP,
     updated_at: STAMP,
   };
 }
 
-const versionPage = (numbers: number[]): VersionPage => ({
+const versionPage = (numbers: number[], source: "user" | "ai" = "user"): VersionPage => ({
   items: numbers.map((n) => ({
     version_number: n,
     name: `Version ${n}`,
+    source,
     created_at: STAMP,
     updated_at: STAMP,
   })),
@@ -182,17 +188,18 @@ function Harness() {
   );
 }
 
-function open(editor: FakeEditor, version = 2) {
+function open(editor: FakeEditor, version = 2, origin: "user" | "ai" = "user") {
   useDocumentStore.setState({
     documentId: 1,
     title: "Patent 1",
     versionNumber: version,
     versionName: `Version ${version}`,
     versionSource: "user",
+    versionOrigin: origin,
     content: "<p>Hi</p>",
     editor: asEditor(editor),
     dirty: false,
-    versions: versionPage([version]).items,
+    versions: versionPage([version], origin).items,
     versionsTotal: 1,
   });
 }
@@ -219,7 +226,9 @@ const DISCARDED =
 beforeEach(() => {
   listVersions.mockResolvedValue(versionPage([1, 2]));
   getVersion.mockResolvedValue(versionRead(1, "<p>v1</p>"));
-  createVersion.mockResolvedValue(versionRead(3));
+  // Every createVersion in this file is the confirmProposal path, so the server's echo
+  // is always source "ai" unless a test overrides it.
+  createVersion.mockResolvedValue(versionRead(3, "<p>applied</p>", "ai"));
   updateVersion.mockResolvedValue(versionRead(2));
   renameVersion.mockResolvedValue({ ...versionRead(2), name: "renamed" });
 });
@@ -676,7 +685,7 @@ it("CP-17 a duplicate version name falls back to the default", async () => {
   aiApply.mockResolvedValue(applyResponse());
   createVersion
     .mockRejectedValueOnce(new ApiError(409, 'A version called "AI: delete claim 3" already exists.'))
-    .mockResolvedValueOnce(versionRead(3));
+    .mockResolvedValueOnce(versionRead(3, "<p>applied</p>", "ai"));
   render(<Harness />);
 
   await ask("delete claim 3");
@@ -716,10 +725,11 @@ it("CP-18 renaming the open version does not disturb consent", async () => {
   expect(aiChat.mock.calls[1][0].consented).toBe(true);
 });
 
-// CP-19. Consent is a person clicking a button in a window; it must not survive the
-// window. The dangerous half of a reload is the unsaved edits, which `beforeunload`
-// still covers.
-it("CP-19 consent does not survive a remount, and dirty still guards unload", async () => {
+// CP-19. Consent now follows the version's persisted `source`, not local React
+// state, so it survives a ChatPanel remount (a reload, a route change) as long as
+// the open version's stored origin is still "ai". This is the behavior the store's
+// `versionOrigin` field exists for.
+it("CP-19 consent survives a remount, tracking the version's persisted origin", async () => {
   const editor = fakeEditor();
   open(editor);
   aiChat.mockResolvedValue(proposalResponse());
@@ -730,13 +740,14 @@ it("CP-19 consent does not survive a remount, and dirty still guards unload", as
   await waitFor(() => expect(applyButton()).not.toBeNull());
   await user().click(applyButton()!);
   await waitFor(() => expect(store().versionNumber).toBe(3));
+  expect(store().versionOrigin).toBe("ai");
 
   view.unmount();
-  aiChat.mockResolvedValue(proposalResponse({ version_number: 3 }));
+  aiChat.mockResolvedValue(chatResponse());
   render(<Harness />);
   await ask("make claim 1 bold");
 
-  expect(aiChat.mock.calls[1][0].consented).toBe(false);
+  expect(aiChat.mock.calls[1][0].consented).toBe(true);
 });
 
 // CP-20. The worked acceptance scenario, end to end.
@@ -787,7 +798,7 @@ it("CP-20 the worked acceptance scenario", async () => {
   await waitFor(() => expect(applyButton()).not.toBeNull());
   expect(aiChat.mock.calls[2][0].consented).toBe(false);
 
-  createVersion.mockResolvedValue(versionRead(4));
+  createVersion.mockResolvedValue(versionRead(4, "<p>applied</p>", "ai"));
   await user().click(applyButton()!);
   await waitFor(() => expect(store().versionNumber).toBe(4));
   expect(screen.getByText(/Saved as version 4\./)).toBeTruthy();
@@ -1332,7 +1343,7 @@ it("CP-32b typing during the AI's version save keeps the text and says so", asyn
 
   await act(async () => {
     editor.setHtml("<p>applied and then typed</p>"); // the user types mid-save
-    save.resolve(versionRead(3));
+    save.resolve(versionRead(3, "<p>applied</p>", "ai"));
   });
 
   await waitFor(() => expect(screen.getByText(/still on version 2/)).toBeTruthy());

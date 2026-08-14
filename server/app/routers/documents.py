@@ -185,7 +185,7 @@ def create_version(
     if body.name is not None and crud.version_name_taken(db, document_id, body.name):
         raise _version_name_conflict(body.name)
     try:
-        return crud.create_version(db, document, content, body.name)
+        return crud.create_version(db, document, content, body.name, body.source)
     except crud.NameTaken as taken:
         raise _version_name_conflict(taken.args[0]) from None
     except crud.VersionNumberConflict:

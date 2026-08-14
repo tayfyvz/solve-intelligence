@@ -21,7 +21,13 @@ const TWO_MINUTES_AGO = naiveUtcAgo(2 * 60_000);
 const YESTERDAY = naiveUtcAgo(26 * 3_600_000);
 
 function summary(n: number, updated = TWO_MINUTES_AGO, name = `Version ${n}`) {
-  return { version_number: n, name, created_at: "2026-01-01T00:00:00", updated_at: updated };
+  return {
+    version_number: n,
+    name,
+    source: "user" as const,
+    created_at: "2026-01-01T00:00:00",
+    updated_at: updated,
+  };
 }
 
 function patent(id: number, title = `Patent ${id}`) {

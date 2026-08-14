@@ -126,8 +126,9 @@ export function createVersion(
   id: number,
   content: string,
   name: string | null = null,
+  source: "user" | "ai" = "user",
 ): Promise<VersionRead> {
-  const body: VersionCreate = { content, name };
+  const body: VersionCreate = { content, name, source };
   return request<VersionRead>(() => http.post(`/api/documents/${id}/versions`, body));
 }
 

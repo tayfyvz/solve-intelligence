@@ -79,6 +79,17 @@ interface DocumentState {
    */
   versionSource: "user" | "ai" | null;
 
+  /**
+   * Who created the CURRENTLY OPEN version, per the server's stored `source` field —
+   * ordinary shared data, kept in sync with `versionNumber` exactly like `versionName`
+   * and `content` are. Not the same field as `versionSource` above: that one is a
+   * transition marker read once by ChatPanel; this one is a persisted fact about the
+   * open version that survives navigation and reload. ChatPanel derives its consent
+   * gate from this field, so an AI-created version stays pre-consented across a
+   * refresh instead of resetting every session.
+   */
+  versionOrigin: "user" | "ai";
+
   /** May legitimately be "" — an emptied draft. Never test truthiness. */
   content: string | null;
   editor: Editor | null;
@@ -228,6 +239,7 @@ const initialState = {
   versionNumber: null as number | null,
   versionName: "",
   versionSource: null as "user" | "ai" | null,
+  versionOrigin: "user" as "user" | "ai",
   content: null as string | null,
   editor: null as Editor | null,
   dirty: false,
@@ -361,6 +373,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         versionNumber: version.version_number,
         versionName: nameOf(version),
         versionSource: "user",
+        versionOrigin: version.source,
         content: checkedContent(version),
         dirty: false,
         loading: false,
@@ -389,6 +402,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         versionNumber: version.version_number,
         versionName: nameOf(version),
         versionSource: "user",
+        versionOrigin: version.source,
         content: checkedContent(version),
         dirty: false,
         loading: false,
@@ -604,7 +618,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       // The live buffer as it was when the request left, for the drift check
       // below. NOT the same as what is sent: ChatPanel passes explicit content.
       const sent = editor.getHTML();
-      const created = await createVersion(documentId, options?.content ?? sent, name ?? null);
+      const created = await createVersion(
+        documentId,
+        options?.content ?? sent,
+        name ?? null,
+        options?.source ?? "user",
+      );
       // NOTE: a discarded write returns here, so `versionSource` is untouched — the
       // reason a failed or superseded save can never leave "ai" behind.
       if (!isCurrent()) return false;
@@ -638,6 +657,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
               versionName: nameOf(created),
               // The Banner's own button defaults to "user"; only ChatPanel passes "ai".
               versionSource: options?.source ?? "user",
+              // The server's echo, not `options?.source`: this is the persisted fact,
+              // and the two can only ever agree since the server stores exactly what
+              // was sent.
+              versionOrigin: created.source,
               // The server's sanitised echo is the truth after nh3 ran; moving
               // versionNumber changes the remount key, which rebuilds the editor
               // from exactly this content.

@@ -58,8 +58,12 @@ function detail(id: number, versionCount = 1, latest = versionCount): DocumentDe
   };
 }
 
-function summary(n: number, updated = `2026-01-0${n}T00:00:00`): VersionSummary {
-  return { version_number: n, name: `Version ${n}`, created_at: STAMP, updated_at: updated };
+function summary(
+  n: number,
+  updated = `2026-01-0${n}T00:00:00`,
+  source: "user" | "ai" = "user",
+): VersionSummary {
+  return { version_number: n, name: `Version ${n}`, source, created_at: STAMP, updated_at: updated };
 }
 
 /** Versions come back newest first, which is the order the store must preserve. */
@@ -78,12 +82,18 @@ function documentPage(ids: number[], extra: Partial<DocumentPage> = {}): Documen
   };
 }
 
-function version(id: number, n: number, content = `<p>doc ${id} v${n}</p>`): VersionRead {
+function version(
+  id: number,
+  n: number,
+  content = `<p>doc ${id} v${n}</p>`,
+  source: "user" | "ai" = "user",
+): VersionRead {
   return {
     document_id: id,
     version_number: n,
     name: `Version ${n}`,
     content,
+    source,
     created_at: STAMP,
     updated_at: `2026-01-0${n}T00:00:00`,
   };
@@ -567,8 +577,10 @@ describe("saving", () => {
 
     // The third argument is the version name, which only ChatPanel ever supplies;
     // `null` is what `createVersion` defaulted to before it was threaded through.
-    expect(createVersion).toHaveBeenCalledWith(1, "<p>live</p>", null);
+    // The fourth is the source, defaulted to "user" for this plain save.
+    expect(createVersion).toHaveBeenCalledWith(1, "<p>live</p>", null, "user");
     expect(store().versionNumber).toBe(3);
+    expect(store().versionOrigin).toBe("user");
     expect(store().versionName).toBe("Version 3");
     // From the 201 body: the server's sanitised echo, not the editor's HTML.
     expect(store().content).toBe("<p>sanitised by nh3</p>");
@@ -586,7 +598,10 @@ describe("saving", () => {
   // and folding those keystrokes into the version would put text in it that the AI
   // never produced and the user never reviewed as part of that change.
   it("saveAsNewVersion() honours an explicit name, content and source", async () => {
-    createVersion.mockResolvedValue({ ...version(1, 3, "<p>ai</p>"), name: "AI: delete claim 3" });
+    createVersion.mockResolvedValue({
+      ...version(1, 3, "<p>ai</p>", "ai"),
+      name: "AI: delete claim 3",
+    });
     listVersions.mockResolvedValue(versionPage([1, 2, 3], { total: 3 }));
 
     await expect(
@@ -594,8 +609,10 @@ describe("saving", () => {
     ).resolves.toBe(true);
 
     // NOT "<p>live</p>", which is what the editor holds.
-    expect(createVersion).toHaveBeenCalledWith(1, "<p>ai</p>", "AI: delete claim 3");
+    expect(createVersion).toHaveBeenCalledWith(1, "<p>ai</p>", "AI: delete claim 3", "ai");
     expect(store().versionSource).toBe("ai");
+    // The server's echoed `source`, not the client's request — the persisted fact.
+    expect(store().versionOrigin).toBe("ai");
     expect(store().versionNumber).toBe(3);
   });
 
@@ -704,7 +721,7 @@ describe("saving", () => {
 
     await expect(saving).resolves.toBe(true);
 
-    expect(createVersion).toHaveBeenCalledWith(1, "<p>typed</p>", null);
+    expect(createVersion).toHaveBeenCalledWith(1, "<p>typed</p>", null, "user");
     // The version exists and is in the list — but the user stays where they are,
     // with their text and their dirty flag.
     expect(store().versions.map((v) => v.version_number)).toEqual([3, 2, 1]);

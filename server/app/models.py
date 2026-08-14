@@ -57,6 +57,13 @@ class DocumentVersion(Base):
     # is a plain label: nothing derives version identity from it.
     name: Mapped[str] = mapped_column(String(MAX_VERSION_NAME_LENGTH), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Which actor created this version: "user" (a plain save, import, or "Save as new
+    # version" click) or "ai" (the confirmed result of an AI-proposed edit). Set once at
+    # creation and never changed by later edits to the same row — it answers "who made
+    # this version exist", not "who last touched its content". The client uses it to
+    # decide whether further AI edits on this version may apply in place (no new
+    # version) or must go through the propose/confirm flow first.
+    source: Mapped[str] = mapped_column(String(4), nullable=False, default="user")
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now(), nullable=False
