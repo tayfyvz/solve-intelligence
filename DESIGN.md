@@ -686,6 +686,13 @@ a vector store, chunking with overlap, re-ranking models, and any retrieval loop
 
 **Would do next, given more time** — and how it maps onto Solve's stack:
 
+- **Prompt caching on the Q&A branch — the highest-value item on this list.** Now that a whole
+  patent fits in one call, the document sits at the *front* of the prompt and is identical on
+  every turn of a conversation, which is exactly the shape a cached prefix needs. It was
+  impossible before: the old question-scoped context changed the prefix every turn, so nothing
+  could ever hit. Cached input is roughly 90% cheaper and faster to prefill, so this removes the
+  only real objection to sending the whole document — at zero cost to reliability, because the
+  model still sees every word. The smart optimisation here is caching, not smarter retrieval.
 - SQLite → **Postgres on RDS**; the SQLAlchemy models port with a URL change
 - **SuperTokens** for auth, scoping documents to users
 - Option B collaborative editing on the same TipTap surface (Yjs)
