@@ -34,6 +34,7 @@ __all__ = [
     "build_outline",
     "build_context",
     "claims_excerpt",
+    "section_excerpt",
     "sections",
     "tokens",
 ]
@@ -715,6 +716,36 @@ def claims_excerpt(doc: ParsedDocument, numbers, *, max_chars: int = 30_000) -> 
     for claim in claims:
         lines += _claim_lines(claim, first_limit=None, rest_limit=None)
     out = "\n".join(lines)
+    if len(out) <= max_chars:
+        return out
+    return out[: max(0, max_chars - len(CONTEXT_TAIL))] + CONTEXT_TAIL
+
+
+def section_excerpt(doc: ParsedDocument, heading: str | None, *, max_chars: int = 30_000) -> str:
+    """The full text of one named non-claim section — the view a GENERATING node reads
+    when `understand` resolved the request to a section rather than to claims.
+
+    Mirrors `claims_excerpt`: matched by heading text only (verbatim, case-insensitive —
+    `understand` is required to copy the heading exactly from the outline, PLAN_SYSTEM
+    rule 9's sibling rule), truncated rather than dropped when it does not fit, and "" for
+    no match. `None`/"" heading (target_kind != "section") also returns "" so callers can
+    call this unconditionally.
+
+    Without this, a request like "make the Appendix more professional" reaches `draft`
+    with nothing but the outline's one-line heading list — the section's actual prose is
+    invisible — and the model, correctly, refuses and asks the user to paste the text
+    back in. Fixing that is the whole point of this function existing.
+    """
+    if not heading:
+        return ""
+    match = next(
+        (s for s in sections(doc) if s.label.strip().lower() == heading.strip().lower()), None
+    )
+    if match is None or not match.blocks:
+        return ""
+    lines = [f"RELEVANT SECTION, IN FULL — {match.label}"]
+    lines += [block_text(b) for b in match.blocks]
+    out = "\n\n".join(lines)
     if len(out) <= max_chars:
         return out
     return out[: max(0, max_chars - len(CONTEXT_TAIL))] + CONTEXT_TAIL

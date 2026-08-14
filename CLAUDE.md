@@ -207,6 +207,15 @@ Confirmed by running the real libraries — do not re-derive or assume otherwise
   first, or copy with `Array.from`, then reset. jsdom does not reproduce this, so every unit test
   passes and the first real click in Chrome silently reports "no file". `TxtDropZone` reads first;
   `ImportPatentDialog` copies. A raw-source test pins the ordering, because nothing else can.
+- **The selection and the attached file are MATERIAL, not just a target.** "Add this as a
+  new section" means "insert what I highlighted", and "add the attached file" means
+  "insert the file". Every node on that path must be able to *see* the text: `understand`
+  gets the 400-char selection block plus the file's name, `plan_ops` and `draft` get the
+  selection **in full** and the prior-art excerpt. `draft` was the one that did not, so
+  the generative branch answered "what text did you want inserted?" about text already on
+  screen. Both prompts now say, in as many words, never to ask for a paste of something in
+  a block below — and that a section heading the user did not name is chosen, not asked
+  about. Same failure shape as the outline trap below; same fix.
 - **`understand` is shown `build_outline`, never the document.** It classifies the request; the
   text arrives one step later, in `retrieve`. Left unsaid, the model does the reasonable thing and
   asks the user to *paste in* the section they asked about — resolved=False, run over, before

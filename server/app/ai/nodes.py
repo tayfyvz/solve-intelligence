@@ -24,7 +24,7 @@ from typing import Protocol
 from app.ai import prompts
 from app.ai import verify as vf
 from app.ai.document import REF_RE, Claim, ParsedDocument, block_text
-from app.ai.outline import build_context, claims_excerpt, content_tokens, tokens
+from app.ai.outline import build_context, claims_excerpt, content_tokens, section_excerpt, tokens
 from app.ai.prompts import Selection, render_critique
 from app.ai.schemas import (
     Answer,
@@ -39,6 +39,7 @@ from app.ai.schemas import (
 )
 from app.ai.understand import (
     CAPABILITY_STATEMENT,
+    FILE_WORDS,
     WHICH_CLAIM,
     Turn,
     claim_refs,
@@ -106,7 +107,10 @@ class LlmBundle:
     # text of the resolved claims, added after 4Z (§21.6). `selection` is shown in full so
     # "remove the selected part" can become a literal replace_text.find.
     plan: Callable[[str, str, str, str, list[Turn], Selection | None], EditPlan]
-    draft: Callable[[str, Retrieved, list[Turn], str | None], EditPlan]
+    # (instruction, retrieved, history, critique, selection) — `selection` for the same
+    # verbatim-copy reason as `plan`, plus one this branch owns: "add this as a new
+    # section" makes the highlighted text the MATERIAL of the edit, not its target.
+    draft: Callable[[str, Retrieved, list[Turn], str | None, Selection | None], EditPlan]
     judge: Callable[[str, Retrieved, EditPlan], JudgeVerdict]
     answer: Callable[[str, Retrieved, list[Turn]], Answer]
 
@@ -368,11 +372,20 @@ def _retrieve(state: dict) -> dict:
     numbers = {c.number for c in doc.claims}
     picked = {n for n in picked if n is not None and n in numbers}
 
-    # 5. The file is retrieved ONLY when `understand` said it is part of the request. An
-    #    attached file that is irrelevant to this question must not eat the context budget
-    #    or the model's attention.
+    # 5. The file is retrieved when `understand` said it is part of the request — OR,
+    #    as a deterministic backstop, when a file IS attached and this instruction plainly
+    #    names it (`FILE_WORDS`, the same regex `missing_file_question` uses for the
+    #    opposite case: a name with no file). Live: a multi-turn "add this file as a new
+    #    Appendix section" request kept resolving intent and target correctly while the
+    #    model left `prior_art_role` at "none" on the turn that mattered, so `draft` saw an
+    #    empty prior-art block and refused, correctly, given what it was shown — asking the
+    #    user to re-paste content that was attached the whole time. `gate_understanding`
+    #    cannot fix this itself (it only ever narrows towards `resolved=False`, never
+    #    invents a fact the model didn't state); this is the retrieval-layer equivalent,
+    #    the one place that already makes best-effort, non-authoritative choices about what
+    #    to fetch. A false positive costs one wasted excerpt fetch, never a wrong edit.
     excerpt = ""
-    if u.prior_art_role != "none":
+    if u.prior_art_role != "none" or (state["prior_art"].strip() and FILE_WORDS.search(instr)):
         excerpt = select_paragraphs(
             state["prior_art"], tokens(instr), cap=settings.max_context_chars
         )
@@ -386,6 +399,16 @@ def _retrieve(state: dict) -> dict:
     #    otherwise the claims plus the description paragraphs this question actually
     #    scores against — with everything it could not fit NAMED, never dropped in
     #    silence. The names come back out as a warning, in `_verify`.
+    # 6a. The generative branches (`generate`, via `draft`) resolve a request to ONE
+    #    non-claim section, not a paragraph rank. `understand` already did the resolving
+    #    (`target_kind == "section"`, `section_heading` set, verified against the outline
+    #    by `gate_understanding`); this fetches that section's full body the same way step
+    #    6 fetches the picked claims' full text, so "make the Appendix more professional"
+    #    reaches `draft` with the Appendix's actual prose instead of only its heading.
+    section_text = ""
+    if u.intent != "answer" and u.target_kind == "section":
+        section_text = section_excerpt(doc, u.section_heading)
+
     if u.intent == "answer":
         view = build_context(
             doc, content_tokens(instr), max_chars=settings.max_answer_context_chars
@@ -402,6 +425,7 @@ def _retrieve(state: dict) -> dict:
         started,
         claims_retrieved=len(picked),
         claims_chars=len(claims_text),
+        section_chars=len(section_text),
         excerpt_chars=len(excerpt),
         # A COUNT, never the headings: a section title is the customer's own words.
         sections_omitted=len(omitted),
@@ -410,6 +434,7 @@ def _retrieve(state: dict) -> dict:
         "retrieved": Retrieved(
             claim_numbers=sorted(picked),
             claims_text=claims_text,
+            section_text=section_text,
             outline=state["outline"],
             prior_art_excerpt=excerpt,
             prior_art_truncated=len(excerpt) < len(state["prior_art"]),
@@ -489,7 +514,11 @@ def _judge_deadline_pass(state: dict) -> dict:
 def _draft(llm: LlmBundle, state: dict) -> dict:
     started = time.monotonic()
     plan = llm.draft(
-        state["instruction"], state["retrieved"], state["history"], state.get("critique")
+        state["instruction"],
+        state["retrieved"],
+        state["history"],
+        state.get("critique"),
+        state.get("selection"),
     )
     attempt = state.get("attempts", 0) + 1
     _node_log(

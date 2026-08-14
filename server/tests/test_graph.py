@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass, field
 
 import pytest
 
@@ -29,7 +30,7 @@ from app.ai.graph import (
     run_plan_initial_state_keys,
 )
 from app.ai.nodes import DEADLINE_MESSAGE, JUDGE_SKIPPED_NOTE
-from app.ai.outline import STOPWORDS, build_context, claims_excerpt, tokens
+from app.ai.outline import STOPWORDS, build_context, claims_excerpt, section_excerpt, tokens
 from app.ai.schemas import Answer, Citation, EditPlan, JudgeVerdict, Op, authors_new_text
 from app.data import SEED_DOCUMENTS
 from tests.fakes import (
@@ -472,6 +473,101 @@ def test_plan_ops_receives_full_claim_text_for_the_claims_it_resolved() -> None:
     assert len(doc.claims[0].blocks) == 5
     for block in doc.claims[0].blocks:
         assert block_text(block) in claims
+
+
+def test_the_generative_nodes_receive_the_targeted_sections_full_text() -> None:
+    """Regression: "make the Appendix more professional" reached `draft` with only the
+    outline's one-line heading list for a section target, and the model correctly (but
+    unhelpfully) asked the user to paste the Appendix text back in. `draft` must be shown
+    the section's actual body, the same way it is shown a resolved claim's."""
+    html = (
+        "<h2>Appendix</h2><p>Inception. The Matrix. Interstellar.</p>"
+        "<h1>Claims</h1><p>1. A widget.</p>"
+    )
+    doc = parse(html)
+    rec = Recorder()
+    go(
+        "make the appendix more professional",
+        html=html,
+        rec=rec,
+        members={
+            "understand": understanding(
+                intent="generate",
+                target_kind="section",
+                claim_numbers=[],
+                section_heading="Appendix",
+                restatement="Rewrite the Appendix.",
+            )
+        },
+    )
+    retrieved = rec.args_for("draft")[0].args[1]
+    assert "Interstellar" in retrieved.section_text
+    assert retrieved.section_text == section_excerpt(doc, "Appendix")
+
+
+def test_draft_receives_the_selection() -> None:
+    """Regression, live: with text highlighted, "add this as a new section" was answered
+    "what text did you want inserted as the new section?".
+
+    The selection reached `understand` (which resolved "this" correctly) and `plan_ops`
+    (which this instruction never visits), but not `draft` — the node that actually had
+    to write the section. It had nothing to insert, so it asked for text the user had
+    already highlighted. The selection is the MATERIAL of this edit, not its target, and
+    only the node that writes can use it."""
+
+    @dataclass
+    class Sel:
+        text: str = "A method of forming a biocompatible layer on a substrate."
+        claim_numbers: list[int] = field(default_factory=list)
+        whole_claims: bool = False
+
+    selection = Sel()
+    rec = Recorder()
+    go(
+        "add this as a new section",
+        rec=rec,
+        selection=selection,
+        members={
+            "understand": understanding(
+                intent="generate",
+                target_kind="selection",
+                claim_numbers=[],
+                restatement="Add the highlighted text as a new section.",
+            )
+        },
+    )
+    # Positionally: (instruction, retrieved, history, critique, selection).
+    assert rec.args_for("draft")[0].args[4] is selection
+
+
+def test_an_attached_file_is_retrieved_even_when_the_model_forgets_the_role() -> None:
+    """Regression: a live multi-turn thread ("add this file at the end of doc" -> ... ->
+    "Add the file as a new section titled 'Appendix' after claim 9." -> "it is attached")
+    kept resolving the target and intent correctly turn after turn, while the model left
+    `prior_art_role` at "none" on the turn that mattered — so `draft` saw an empty
+    prior-art block and refused, asking the user to paste content that was attached the
+    whole time. The instruction plainly names the file (`FILE_WORDS`: "file"/"attached"),
+    so retrieval must not depend solely on the model having flagged `prior_art_role`."""
+    rec = Recorder()
+    go(
+        "Add the file as a new section titled 'Appendix' after claim 9.",
+        rec=rec,
+        prior_art="Inception. The Matrix. Interstellar.",
+        prior_art_name="movies.txt",
+        members={
+            "understand": understanding(
+                intent="generate",
+                target_kind="section",
+                claim_numbers=[],
+                section_heading="Appendix",
+                prior_art_role="none",  # the model forgot to flag it — this is the bug
+                restatement="Add the file as a new Appendix section after claim 9.",
+            )
+        },
+    )
+    retrieved = rec.args_for("draft")[0].args[1]
+    assert "Interstellar" in retrieved.prior_art_excerpt
+    assert prompts.prior_art_block_from(retrieved) != ""
 
 
 # ------------------------------------------------------------- the structural bounds

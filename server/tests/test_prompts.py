@@ -128,10 +128,12 @@ def test_instruction_is_the_last_message(builder) -> None:
 @pytest.mark.parametrize("builder", BUILDERS, ids=["understand", "plan", "draft", "answer"])
 def test_the_selection_block_is_never_duplicated(builder) -> None:
     """L4 — two renderings of the SELECTION block under two headers is exactly the kind
-    of duplicate that drifts. `understand` and `plan` each take a selection parameter
-    (understand to resolve the target, plan to copy it verbatim into `replace_text`); the
-    others take none. None of the BUILDERS above pass a selection, so the block itself
-    must not appear at all here — this only guards against it appearing twice."""
+    of duplicate that drifts. `understand`, `plan` and `draft` each take a selection
+    parameter (understand to resolve the target, plan to copy it verbatim into
+    `replace_text`, draft because "add this as a new section" makes the selection the
+    material of the edit); `answer` takes none. None of the BUILDERS above pass a
+    selection, so the block itself must not appear at all here — this only guards against
+    it appearing twice."""
     hits = sum(m["content"].count("SELECTION (the user has") for m in builder())
     assert hits == 0
 
@@ -162,6 +164,62 @@ def test_plan_sees_the_selection_verbatim_and_uncapped() -> None:
         "remove the selected part", "outline", "", "", [], Selection(text=long_text)
     )
     assert long_text in messages[0]["content"]
+
+
+def test_draft_sees_the_selection_verbatim_and_uncapped() -> None:
+    """Regression, live: with text highlighted, "add this as a new section" was answered
+    *"what text did you want inserted as the new section?"* — the selection went to
+    `understand` and to `plan_ops`, but the GENERATIVE branch runs `draft`, and `draft`
+    had never been shown it. The model had nothing to insert and asked, correctly, for
+    text the user had already selected.
+
+    Uncapped for the same reason `plan` is: a section built from half a selection is
+    worse than a refusal, and the route already caps the wire selection at 8,000 chars."""
+    long_text = "A method of forming the biocompatible layer on a substrate. " * 30
+    messages = build_draft_messages(
+        "add this as a new section", retrieved(), [], None, Selection(text=long_text)
+    )
+    assert long_text in messages[0]["content"]
+    assert messages[-1]["content"] == "add this as a new section"
+
+
+def test_draft_is_told_the_selection_and_the_file_are_material_not_targets() -> None:
+    """The prompt half of the same regression. Without this rule the block is present and
+    the model still asks — it has no reason to read a SELECTION as the text to INSERT."""
+    assert "LOOK BEFORE YOU ASK" in DRAFT_SYSTEM
+    assert "A SECTION NEEDS A HEADING, AND A MISSING ONE IS NOT A REASON TO REFUSE" in DRAFT_SYSTEM
+    # The same instruction can be routed to plan_ops instead, so both planners need it.
+    assert "ADDING THE SELECTED TEXT, OR THE ATTACHED FILE, AS A NEW SECTION" in PLAN_SYSTEM
+
+
+def test_understand_never_asks_for_text_the_user_already_supplied() -> None:
+    """Live: "add attached file", with a file attached, was answered *"I need the section
+    heading and the file text … I don't have access to the attachment in this chat."*
+
+    Two separate refusals in one sentence, and both are wrong: `understand` is TOLD a file
+    is attached and told the next step reads it, and a heading it can pick itself is not
+    an ambiguity worth a round trip. Same shape as the outline rule above — the model
+    asks for what it cannot see, not knowing a second step exists."""
+    assert "THE USER MAY HAVE ALREADY GIVEN YOU THE TEXT." in UNDERSTAND_SYSTEM
+    assert "NEVER set `resolved` to false in order to ask what text to insert" in UNDERSTAND_SYSTEM
+    assert "A NEW SECTION WITH NO HEADING NAMED IS STILL RESOLVED." in UNDERSTAND_SYSTEM
+
+
+def test_the_attached_file_note_forbids_asking_for_a_paste() -> None:
+    """The note is the only place `understand` learns a file exists at all, so it is the
+    only place that can stop it asking for the contents."""
+    note = build_understand_messages(
+        "add attached file",
+        "outline",
+        [],
+        None,
+        None,
+        claim_count=8,
+        prior_art_present=True,
+        prior_art_name="prior.txt",
+    )[0]["content"]
+    assert "NEVER ask the user to paste the file's text" in note
+    assert "prior.txt" in note
 
 
 def test_plan_without_a_selection_carries_no_selection_block() -> None:

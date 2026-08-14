@@ -146,6 +146,25 @@ So:
   RESOLVED, intent "answer", target_kind "section", `section_heading` set to that text.
   It is content the document already contains, not something missing.
 
+THE USER MAY HAVE ALREADY GIVEN YOU THE TEXT.
+Two things arrive alongside a message and carry text of their own: the SELECTION block
+below (what the user has highlighted in the editor) and an ATTACHED FILE (named below when
+one is present). Either can be the MATERIAL for a change, not merely its target — "add
+this as a new section", "add the attached file", "turn this into an Abstract". Both are
+read in the NEXT step, exactly like the document itself. So:
+- NEVER set `resolved` to false in order to ask what text to insert, or to ask the user to
+  paste, re-type, attach or "provide the content". They already provided it. This is the
+  same rule as the outline rule above, for the same reason.
+- "this", "that", "it" beside a SELECTION block means the selection. Resolve it: intent
+  "generate", target_kind "selection", `resolved` true.
+- A request that names the attached file, when one is attached, is RESOLVED, and
+  `prior_art_role` is "source" (it is material for a change), "about" or "compare" — never
+  "none".
+- A NEW SECTION WITH NO HEADING NAMED IS STILL RESOLVED. "Add this as a new section" does
+  not say what to call it, and that is not an ambiguity worth a round trip: the next step
+  picks a short, plain heading and tells the user what it chose, so they can rename it.
+  Only ask about a heading if the user asks you to.
+
 WRITING THE QUESTION
 - One sentence. Plain English. Name what you DO understand, then ask for the one missing
   piece: "I can make a claim bold — which claim did you mean?"
@@ -270,6 +289,17 @@ RULES
     to "" to remove it, or to the user's replacement wording otherwise. If the instruction
     says "the selected part" and no SELECTION block appears below, that is a rule-4(b)
     refusal: there is nothing selected to act on.
+13. ADDING THE SELECTED TEXT, OR THE ATTACHED FILE, AS A NEW SECTION. "Add this as a new
+    section", "put the attached file in its own section" — the text is ALREADY BELOW, in
+    the SELECTION block or between <prior_art> and </prior_art>. Use it: emit
+    `insert_section` whose `paragraphs` are that text, split at its paragraph breaks and
+    otherwise unchanged. NEVER return "needs_clarification" asking the user to paste,
+    re-type or attach text that already appears in one of those blocks — they gave it to
+    you, and asking again is the most frustrating answer this assistant can give. Rule 8's
+    "never copy it verbatim" governs CLAIMS; copying reference text into a SECTION is
+    precisely what was asked for. If the user named no heading, choose a short plain one
+    describing the content and say which in `message` — a missing heading is not a
+    rule-4(b) ambiguity.
 
 DOCUMENT OUTLINE (reference only — do not copy it back)
 {outline}
@@ -369,11 +399,42 @@ DRAFTING RULES
     ("no such section"), not a guess at which one they mean. `delete_section` can never
     touch the claims — the claims region is not a section this op can reach.
 
+17. REWRITING TEXT IN AN EXISTING NON-CLAIM SECTION. When a "RELEVANT SECTION, IN FULL"
+    block appears below, that is the section the request targets, shown so you can rewrite
+    it faithfully instead of inventing content. Express the rewrite as `replace_text`, with
+    `find` copied VERBATIM from that block — character for character, one paragraph at a
+    time if the section has several — and `replace` set to your rewritten paragraph(s). Do
+    not invent facts the section does not already state; "more professional" or "clearer"
+    means better wording for the same content, not new content.
+
+18. THE USER MAY HAVE ALREADY WRITTEN THE TEXT — LOOK BEFORE YOU ASK. Two blocks below can
+    carry the MATERIAL for a change rather than its target: a SELECTION block (text the
+    user has highlighted in the editor, shown in full) and a <prior_art> block (a file they
+    attached). "Add this as a new section", "add the attached file", "make this an
+    Abstract" all mean: take that text and place it. Emit `insert_section` whose
+    `paragraphs` are that text, split at its paragraph breaks — tidy the formatting if you
+    must, but do not rewrite, summarise or shorten it unless asked. NEVER return
+    "needs_clarification" asking the user to paste, re-type, attach or "provide the
+    content" of something that already appears in one of those blocks. They gave it to you;
+    asking for it again is the most frustrating answer this assistant can give, and rule 6
+    does not apply — text the user supplied is not subject matter you invented. Rule 12's
+    "never copy verbatim" governs CLAIMS only; copying reference text into a SECTION is
+    exactly what was asked for.
+19. A SECTION NEEDS A HEADING, AND A MISSING ONE IS NOT A REASON TO REFUSE. If the user
+    named a heading, it is verbatim (rule 14). If they named none, choose a short plain
+    heading describing the content and name your choice in `message` — "Added as a new
+    section, 'Prior Art Summary'" — so they can rename it in one more instruction. This is
+    never a rule-7 ambiguity.
+
 DOCUMENT OUTLINE (reference only — do not copy it back)
 {outline}
 
 RELEVANT CLAIMS, IN FULL
 {claims}
+
+{section}
+
+{selection_block}
 
 {prior_art}"""
 
@@ -539,7 +600,10 @@ def _prior_art_note(present: bool, name: str | None) -> str:
         f'An uploaded reference file is attached ("{name or "uploaded file"}"). Its contents '
         "are NOT shown to you.\nIf the request is about that file, or compares it with the "
         "document, or uses it as source\nmaterial, say so in `prior_art_role`; the next step "
-        "will read the file."
+        "will read the file. This is true EVERY turn the file is attached, including a turn "
+        "that only answers a pending question — do not let `prior_art_role` fall back to "
+        '"none" just because this message is short. NEVER ask the user to paste the file\'s '
+        "text: the file is already attached, and the next step reads it automatically."
     )
 
 
@@ -622,10 +686,23 @@ def build_draft_messages(
     retrieved: Retrieved,
     history: list[Turn],
     critique: str | None,
+    selection: Selection | None = None,
 ) -> list[dict[str, str]]:
+    """`selection` is shown here for the same reason `plan_ops` gets it, and then one
+    reason more. The shared reason is verbatim copying: a rewrite of highlighted text has
+    to become a `replace_text.find` that matches the document character for character.
+
+    The extra reason is that on this branch the selection is frequently not the TARGET of
+    the request but its MATERIAL — "add this as a new section" means "insert what I
+    highlighted". Without the block, `draft` has no text to insert and does the only
+    honest thing left: it asks the user to paste in text they had already selected. That
+    was the live failure this parameter exists to remove.
+    """
     system = DRAFT_SYSTEM.format(
         outline=retrieved.outline,
         claims=retrieved.claims_text,
+        section=retrieved.section_text,
+        selection_block=_selection_block_verbatim(selection),
         prior_art=prior_art_block_from(retrieved),
     )
     messages = _messages(system, history, instruction)

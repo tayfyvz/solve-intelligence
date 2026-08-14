@@ -204,12 +204,16 @@ def plan_llm(
 
 
 def draft_llm(
-    instruction: str, retrieved: Retrieved, history: list[Turn], critique: str | None
+    instruction: str,
+    retrieved: Retrieved,
+    history: list[Turn],
+    critique: str | None,
+    selection: prompts.Selection | None = None,
 ) -> EditPlan:
     """Returns an EditPlan rather than free prose, so the generative path lands in the
     same apply engine as the deterministic one. There is one apply pipeline."""
     return _parse(
-        messages=prompts.build_draft_messages(instruction, retrieved, history, critique),
+        messages=prompts.build_draft_messages(instruction, retrieved, history, critique, selection),
         response_format=EditPlan,
         node="draft",
         max_output_tokens=DRAFT_TOKENS,

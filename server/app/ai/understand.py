@@ -214,7 +214,10 @@ def fast_understanding(
     return None
 
 
-_FILE_WORDS = re.compile(
+# Public (no leading underscore): `nodes._retrieve` also reads this, as the deterministic
+# backstop for a file the model was told about but did not flag as relevant — see its
+# call site for why.
+FILE_WORDS = re.compile(
     r"\b(file|attachment|attached|upload(?:ed)?|prior art|"
     r"reference (?:doc|document|material)|\.txt)\b",
     re.I,
@@ -229,7 +232,7 @@ def missing_file_question(instruction: str, prior_art: str) -> str | None:
     clarify_count like any other clarification — exempting it would create a loop with
     no bound.
     """
-    if prior_art.strip() or not _FILE_WORDS.search(collapse(instruction)):
+    if prior_art.strip() or not FILE_WORDS.search(collapse(instruction)):
         return None
     return (
         "I don't have a file to look at — nothing is attached to this conversation. "

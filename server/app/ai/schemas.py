@@ -194,6 +194,10 @@ class Retrieved(BaseModel):
 
     claim_numbers: list[int] = Field(default_factory=list)
     claims_text: str = ""
+    # The full body of the ONE non-claim section `understand` resolved the request to,
+    # when target_kind == "section" — the section counterpart of `claims_text`. "" when
+    # the request targets claims, the whole document, or nothing named.
+    section_text: str = ""
     outline: str = ""
     prior_art_excerpt: str = ""  # sanitised but NOT yet fenced — that happens once, in prompts.py
     prior_art_truncated: bool = False

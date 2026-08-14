@@ -11,6 +11,7 @@ from app.ai.outline import (
     build_context,
     build_outline,
     claims_excerpt,
+    section_excerpt,
 )
 from app.data import SEED_DOCUMENTS
 
@@ -145,6 +146,30 @@ def test_claims_excerpt_selects_and_never_truncates() -> None:
 def test_claims_excerpt_is_empty_for_unknown_claims(numbers: list[int]) -> None:
     """The caller omits the block entirely rather than emitting a bare header."""
     assert claims_excerpt(parse(SEED_1), numbers) == ""
+
+
+# ------------------------------------------------------------- section_excerpt (draft's
+# view of a resolved non-claim section — the fix for "make the Appendix more professional"
+# reaching `draft` with nothing but the outline's one-line heading list)
+
+APPENDIX_DOC = (
+    "<h2>Appendix</h2><p>Inception. The Matrix. Interstellar.</p><h1>Claims</h1><p>1. A widget.</p>"
+)
+
+
+def test_section_excerpt_returns_the_full_body() -> None:
+    out = section_excerpt(parse(APPENDIX_DOC), "Appendix")
+    assert out.splitlines()[0] == "RELEVANT SECTION, IN FULL — Appendix"
+    assert "Inception. The Matrix. Interstellar." in out
+
+
+def test_section_excerpt_matches_heading_case_insensitively() -> None:
+    assert "Interstellar" in section_excerpt(parse(APPENDIX_DOC), "appendix")
+
+
+@pytest.mark.parametrize("heading", [None, "", "No Such Section"])
+def test_section_excerpt_is_empty_without_a_match(heading: str | None) -> None:
+    assert section_excerpt(parse(APPENDIX_DOC), heading) == ""
 
 
 # ------------------------------------- hand-typed pseudo-headings (product owner's bug)
