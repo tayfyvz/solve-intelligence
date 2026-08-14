@@ -81,7 +81,7 @@ interface DocumentState {
   content: string | null;
   editor: Editor | null;
   dirty: boolean;
-  /** The *editor pane* is loading: it unmounts, so selection actions clear `dirty`. */
+  /** The *editor pane* is loading: it stays mounted and dimmed, never unmounted. */
   loading: boolean;
   /** A list page is loading. Never unmounts the editor, so it never touches `dirty`. */
   listLoading: boolean;
@@ -246,7 +246,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         documents: page.items,
         documentsTotal: page.total,
         documentsLimit: page.limit,
-        listLoading: false,
       });
       // Without this the first paint is an empty editor column. Only ever on the
       // first page load — once a patent is open, changing pages must not move it.
@@ -257,7 +256,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       // Guarded in the catch too: otherwise aborting a load that happens to 404
       // paints "not found" over the document you successfully switched to.
       if (!isCurrent()) return;
-      set({ listLoading: false, error: toMessage(error) });
+      set({ error: toMessage(error) });
+    } finally {
+      // Every exit path, the stale returns included: nothing later clears it, and
+      // a stuck `listLoading` disables the pager and "Show more" for the rest of
+      // the session. Last writer wins, exactly as in `save`.
+      set({ listLoading: false });
     }
   },
 
@@ -276,11 +280,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         versions: page.items,
         versionsTotal: page.total,
         versionsLimit: page.limit,
-        listLoading: false,
       });
     } catch (error) {
       if (!isCurrent()) return;
-      set({ listLoading: false, error: toMessage(error) });
+      set({ error: toMessage(error) });
+    } finally {
+      set({ listLoading: false }); // see `loadDocuments`
     }
   },
 
@@ -303,15 +308,15 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         versions: mergeVersions(get().versions, page.items),
         versionsTotal: page.total,
         versionsLimit: page.limit,
-        listLoading: false,
       });
     } catch (error) {
       if (!isCurrent()) return;
       // The list the user is looking at stays exactly as it was; only the error
       // appears, so a failed "show more" costs nothing but the click.
-      set({ listLoading: false, error: toMessage(error) });
+      set({ error: toMessage(error) });
     } finally {
       appending = false;
+      set({ listLoading: false }); // see `loadDocuments`
     }
   },
 
@@ -354,11 +359,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       });
     } catch (error) {
       if (!isCurrent()) return;
-      // `dirty` clears on the failure path too: the loading branch already
-      // unmounted the editor, so it remounts holding the last *saved* content and
-      // the user's edits are gone. Still inside the one-writer rule — this is a
-      // selection action.
-      set({ loading: false, dirty: false, error: toMessage(error) });
+      // `dirty` is deliberately NOT cleared. The editor stays MOUNTED while
+      // loading (App only dims it), and on this path `documentId`/`versionNumber`
+      // never moved — so the remount key never changed and the user's edited text
+      // is still on screen. Clearing the flag would drop the badge, the
+      // `beforeunload` guard and the dialog on the next switch, over text that is
+      // still there and still unsaved.
+      set({ loading: false, error: toMessage(error) });
     }
   },
 
@@ -380,9 +387,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       });
     } catch (error) {
       if (!isCurrent()) return;
-      // See `selectDocument`: a failed switch still cost the user their edits,
-      // so the bar must not keep claiming they are unsaved.
-      set({ loading: false, dirty: false, error: toMessage(error) });
+      // See `selectDocument`: a failed switch changes nothing on screen, so the
+      // unsaved edits are still there and `dirty` must stay set.
+      set({ loading: false, error: toMessage(error) });
     }
   },
 
@@ -497,8 +504,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const isCurrent = captureRequest();
     set({ saving: true, pendingAction: "save", error: null });
     try {
+      // Captured BEFORE the request, exactly as ChatPanel does around the AI
+      // round-trip: these are the bytes the server now holds, and the reference
+      // point for the drift check below.
+      const sent = editor.getHTML();
       // Updates version `n` in place — it must never create a version.
-      const saved = await updateVersion(documentId, versionNumber, editor.getHTML());
+      const saved = await updateVersion(documentId, versionNumber, sent);
       // Stale: the user has moved on, so dirty and content stay untouched.
       if (!isCurrent()) return false;
       set({
@@ -510,7 +521,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
             ? { ...v, updated_at: saved.updated_at }
             : v,
         ),
-        dirty: false,
+        // THE DRIFT GUARD, same rule as ChatPanel's. Keystrokes typed while the
+        // PUT was in flight are NOT on the server; clearing `dirty` over them
+        // would drop the badge, the `beforeunload` guard and the dirty dialog, and
+        // the next version switch would discard them without a word.
+        ...(editor.getHTML() === sent ? { dirty: false } : null),
       });
       return true;
     } catch (error) {
@@ -535,24 +550,25 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const isCurrent = captureRequest();
     set({ saving: true, pendingAction: "saveAsNew", error: null });
     try {
-      const created = await createVersion(
-        documentId,
-        options?.content ?? editor.getHTML(),
-        name ?? null,
-      );
+      // The live buffer as it was when the request left, for the drift check
+      // below. NOT the same as what is sent: ChatPanel passes explicit content.
+      const sent = editor.getHTML();
+      const created = await createVersion(documentId, options?.content ?? sent, name ?? null);
       // NOTE: a discarded write returns here, so `versionSource` is untouched — the
       // reason a failed or superseded save can never leave "ai" behind.
       if (!isCurrent()) return false;
+      // The new version has the highest number and the list is newest-first, so
+      // it belongs at the top. Resetting to page 1 is one rule; splicing it into
+      // an accumulated list whose offsets have all just shifted by one is
+      // several, all wrong somewhere.
+      //
+      // BEFORE the set() below, not after: App commits a held-back selection the
+      // instant `dirty` goes false, and that selection bumps the request token —
+      // which would discard this fetch and leave the new version out of the
+      // sidebar until a full page reload.
+      await get().loadVersions(0);
+      if (!isCurrent()) return false;
       set({
-        versionNumber: created.version_number,
-        versionName: nameOf(created),
-        // The Banner's own button defaults to "user"; only ChatPanel passes "ai".
-        versionSource: options?.source ?? "user",
-        // The server's sanitised echo is the truth after nh3 ran; moving
-        // versionNumber changes the remount key, which rebuilds the editor
-        // from exactly this content.
-        content: checkedContent(created),
-        dirty: false,
         // The patent row shows a version count; without this it keeps saying
         // "1 version" next to a list that now shows two, until the next reload.
         documents: get().documents.map((d) =>
@@ -560,12 +576,25 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
             ? { ...d, version_count: d.version_count + 1, updated_at: created.updated_at }
             : d,
         ),
+        // THE DRIFT GUARD — the same rule as `save`, and it matters more here:
+        // moving `versionNumber` changes App's remount key, which would rebuild
+        // the editor from the server's echo and destroy the keystrokes outright.
+        // Drifted, the user stays on their version with their text and `dirty`
+        // still set; the created version is in the list, one click away.
+        ...(editor.getHTML() === sent
+          ? {
+              versionNumber: created.version_number,
+              versionName: nameOf(created),
+              // The Banner's own button defaults to "user"; only ChatPanel passes "ai".
+              versionSource: options?.source ?? "user",
+              // The server's sanitised echo is the truth after nh3 ran; moving
+              // versionNumber changes the remount key, which rebuilds the editor
+              // from exactly this content.
+              content: checkedContent(created),
+              dirty: false,
+            }
+          : null),
       });
-      // The new version has the highest number and the list is newest-first, so
-      // it belongs at the top. Resetting to page 1 is one rule; splicing it into
-      // an accumulated list whose offsets have all just shifted by one is
-      // several, all wrong somewhere.
-      await get().loadVersions(0);
       return true;
     } catch (error) {
       if (!isCurrent()) return false;
@@ -591,8 +620,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   /**
-   * One writer: `Editor.onUpdate` sets it, the two save actions and the two
-   * selection actions clear it. Nothing else may clear it — App commits a
+   * One writer: `Editor.onUpdate` sets it; the two save actions clear it when
+   * what they saved is still what the editor holds, and the two selection actions
+   * clear it when they succeed. Nothing else may clear it — App commits a
    * selection held back by the dirty dialog when this goes false. In particular
    * the list, create and rename actions never touch it.
    */

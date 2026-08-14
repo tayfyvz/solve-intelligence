@@ -109,6 +109,9 @@ export default function TxtDropZone({
         ref={input}
         type="file"
         accept=".txt"
+        // Named here rather than with a <label>: the visible trigger is the button
+        // below, so a label would be a second, duplicate control in the tab order.
+        aria-label="Attach a .txt file for context"
         className="sr-only"
         tabIndex={-1}
         onChange={async (e) => {

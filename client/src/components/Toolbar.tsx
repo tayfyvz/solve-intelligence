@@ -9,7 +9,11 @@ import { useEditorState } from "@tiptap/react";
 interface Tool {
   /** Visible label. Short on purpose: the toolbar sits above a 44rem sheet. */
   label: string;
-  /** Full name for screen readers and the tooltip. */
+  /**
+   * Full name for screen readers and the tooltip. It must *contain* `label`
+   * (WCAG 2.5.3, Label in Name) — otherwise a speech-input user who says
+   * "click H1" cannot press the button they can see.
+   */
   name: string;
   /** Extra classes for the label glyph (bold weight, italic, strike-through). */
   labelClass?: string;
@@ -59,19 +63,19 @@ const GROUPS: Tool[][] = [
   [
     {
       label: "H1",
-      name: "Heading 1",
+      name: "H1 heading",
       isActive: (e) => e.isActive("heading", { level: 1 }),
       run: (c) => c.toggleHeading({ level: 1 }),
     },
     {
       label: "H2",
-      name: "Heading 2",
+      name: "H2 heading",
       isActive: (e) => e.isActive("heading", { level: 2 }),
       run: (c) => c.toggleHeading({ level: 2 }),
     },
     {
       label: "H3",
-      name: "Heading 3",
+      name: "H3 heading",
       isActive: (e) => e.isActive("heading", { level: 3 }),
       run: (c) => c.toggleHeading({ level: 3 }),
     },
@@ -85,7 +89,7 @@ const GROUPS: Tool[][] = [
     },
     {
       label: "1. List",
-      name: "Numbered list",
+      name: "1. List (numbered)",
       isActive: (e) => e.isActive("orderedList"),
       run: (c) => c.toggleOrderedList(),
     },

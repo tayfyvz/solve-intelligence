@@ -461,7 +461,7 @@ land in another. All errors render in the UI, never only in the console.
 Chosen for value rather than coverage percentage.
 
 > **Status: every row below is written and passing.** The count outgrew the "roughly 20" this
-> section originally planned for — 708 in total, 496 backend and 212 frontend — because the AI
+> section originally planned for — 784 in total, 558 backend and 226 frontend — because the AI
 > layer arrived with four deterministic gates of its own. `PLAN.md` §31.2 is the single source of
 > truth for the number. What holds regardless of the count: **none of them requires an API key.**
 

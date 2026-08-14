@@ -84,6 +84,16 @@ def test_out_of_range_paging_parameters_are_422(client: TestClient, path: str, q
 
 
 @pytest.mark.parametrize("path", [DOCUMENTS, f"{DOCUMENTS}/1/versions"])
+def test_an_offset_past_the_64_bit_range_is_422_not_500(client: TestClient, path: str) -> None:
+    """`ge=0` alone let an integer wider than SQLite's INTEGER through to the
+    driver, which raised OverflowError — a 500 for a bad query string. The path
+    ids were already bounded for exactly this; the offset reaches the same driver.
+    """
+    assert client.get(f"{path}?offset=9223372036854775808").status_code == 422
+    assert client.get(f"{path}?offset=9223372036854775807").status_code == 200  # the bound itself
+
+
+@pytest.mark.parametrize("path", [DOCUMENTS, f"{DOCUMENTS}/1/versions"])
 def test_the_limit_bounds_themselves_are_accepted(client: TestClient, path: str) -> None:
     assert len(client.get(f"{path}?limit=1").json()["items"]) == 1
     assert client.get(f"{path}?limit=100").status_code == 200

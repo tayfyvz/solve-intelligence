@@ -9953,11 +9953,12 @@ for the same reason: **it can only count what a table row declares.** A phase wh
 "harden what exists" still needs somewhere to declare what it added.
 
 **A note on this number versus what `pytest`/`vitest` print.** This section counts **gate rows** —
-specified, named behaviours. The suites report **496 backend and 212 frontend test functions**,
+specified, named behaviours. The suites report **558 backend and 226 frontend test functions**,
 because a single gate row is frequently a `parametrize`/`it.each` covering several cases (one 404
 row over five routes, one exception→status table, one file-validation matrix). The two numbers
-measure different things and are both correct; **340 is the number this document owns**, and 708 is
-the number the runners own. *(325 → 329: **+3** for the bullet-defined gate tests the extraction missed, and **+1**
+measure different things and are both correct; **340 is the number this document owns**, and 784 is
+the number the runners own. *(708 → 784: **+76** regression tests added by the QA hardening pass,
+one or more for each defect it found. That pass added no gate rows, so the 340 is unchanged.)* *(325 → 329: **+3** for the bullet-defined gate tests the extraction missed, and **+1**
 for **`G19`**, the test of `recursion_limit` and its `GraphRecursionError` copy — a bound §3.4
 presented as one of three independently sufficient mechanisms, with a user-facing sentence, that
 nothing executed. 329 → 330 at 4C: **+1** for the no-plan companion row, §22.13 row 13.)*

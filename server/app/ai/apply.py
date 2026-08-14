@@ -60,6 +60,11 @@ class ApplyResult:
     html: str | None  # None when the plan was refused OR verification failed
     warnings: list[str]
     report: VerifyReport
+    # The ORIGINAL numbers this plan deleted. Carried out of the engine because a caller
+    # that verifies the SHIPPED bytes a second time needs it to keep VF-W2's suppression:
+    # without it the renumber's own self-reference is reported back to the user as a
+    # defect they caused, next to the correct warning that contradicts it.
+    deleted_numbers: frozenset[int] = frozenset()
 
 
 def _blocked(message: str) -> ApplyResult:
@@ -184,4 +189,5 @@ def apply_plan(html: str, operations: list[Op]) -> ApplyResult:
         html=out if report.ok else None,
         warnings=list(dict.fromkeys(warnings + report.warnings)),
         report=report,
+        deleted_numbers=frozenset(deleted),
     )

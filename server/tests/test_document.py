@@ -13,13 +13,14 @@ import pytest
 
 from app.ai.document import (
     BLOCK_TAGS,
+    DROP_TAGS,
     INLINE_ONLY_TAGS,
     Block,
     parse,
     render,
 )
 from app.data import SEED_DOCUMENTS
-from app.sanitize import ALLOWED_TAGS
+from app.sanitize import ALLOWED_TAGS, STRIP_CONTENT_TAGS, sanitize_html
 
 SEED_1 = SEED_DOCUMENTS[0].content
 SEED_2 = SEED_DOCUMENTS[1].content
@@ -197,6 +198,30 @@ def test_block_level_tags_survive_set_equation() -> None:
     without a decision about the engine fails here the same day."""
     assert INLINE_ONLY_TAGS <= set(ALLOWED_TAGS)
     assert BLOCK_TAGS == set(ALLOWED_TAGS) - INLINE_ONLY_TAGS
+
+
+def test_script_and_style_are_dropped_with_their_text() -> None:
+    """T14 — the AI path and the save path must agree about the same bytes.
+
+    An unmodelled tag is normally UNWRAPPED, text kept, which turned
+    `<script>alert(1)</script>` into a visible `<p>alert(1)</p>`: inert, escaped text, but
+    the AI path was promoting to prose exactly what Save deletes.
+    """
+    html = "<script>alert(1)</script><style>p{color:red}</style><h1>Claims</h1><p>1. A device.</p>"
+    out = f(html)
+    assert out == "<h1>Claims</h1><p>1. A device.</p>"
+    assert out == sanitize_html(out)
+    # Nested, and inside the claims region: decomposed before any block is collected.
+    assert f("<div><p>1. a<script>alert(2)</script></p><p>2. b</p></div>") == (
+        "<p>1. a</p><p>2. b</p>"
+    )
+    assert "alert" not in f(html) and "color:red" not in f(html)
+
+
+def test_dropped_tags_are_exactly_the_sanitisers_stripped_tags() -> None:
+    """T14(b) — a set equation, like T9(a): a tag added to one path without a decision
+    about the other fails here the same day."""
+    assert DROP_TAGS == set(STRIP_CONTENT_TAGS)
 
 
 def test_block_level_tags_survive() -> None:

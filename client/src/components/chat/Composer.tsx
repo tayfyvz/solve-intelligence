@@ -14,6 +14,17 @@ export interface ComposerProps {
   onSuggestion(text: string): void;
 }
 
+/**
+ * The server's own cap (`INSTRUCTION_TOO_LONG`). Enforced here so a long paste
+ * fails before the round trip instead of after it — the server's 422 is a good
+ * sentence, but by the time it arrives the composer has been cleared and the
+ * user's text is gone.
+ */
+const MAX_INSTRUCTION = 2_000;
+
+/** Far enough from the cap to be a warning, close enough not to be noise. */
+const COUNTER_FROM = MAX_INSTRUCTION - 200;
+
 export default function Composer({
   value,
   onChange,
@@ -52,6 +63,7 @@ export default function Composer({
       <textarea
         aria-label="Ask the AI"
         rows={3}
+        maxLength={MAX_INSTRUCTION}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         // Enter sends, Shift+Enter newlines — the convention every chat UI uses,
@@ -65,6 +77,12 @@ export default function Composer({
         placeholder="Ask for an edit, or a question…"
         className="focus-ring max-h-40 w-full resize-y rounded-lg border border-slate-300 px-2 py-1.5 text-[0.8125rem]"
       />
+
+      {value.length >= COUNTER_FROM && (
+        <p aria-live="polite" className="mt-1 text-right text-[0.75rem] text-slate-500">
+          {value.length} / {MAX_INSTRUCTION} characters
+        </p>
+      )}
 
       <button
         type="button"

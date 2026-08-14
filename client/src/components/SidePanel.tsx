@@ -58,10 +58,15 @@ export default function SidePanel({
       handle.removeEventListener("pointermove", onMove);
       handle.removeEventListener("pointerup", onUp);
       handle.removeEventListener("pointercancel", onUp);
+      handle.removeEventListener("lostpointercapture", onUp);
     };
     handle.addEventListener("pointermove", onMove);
     handle.addEventListener("pointerup", onUp);
     handle.addEventListener("pointercancel", onUp);
+    // The capture can be lost without a pointerup — the element is removed, or
+    // another element captures. Without this the listeners stay bound to a closure
+    // holding a stale `startWidth`, and the next drag jumps by the old delta.
+    handle.addEventListener("lostpointercapture", onUp);
   };
 
   if (collapsed) {
@@ -100,7 +105,7 @@ export default function SidePanel({
             aria-expanded={true}
             aria-label={`Collapse ${label} panel`}
             onClick={() => onCollapsedChange(true)}
-            className="focus-ring flex h-5 w-5 items-center justify-center rounded-md text-slate-400 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-700"
+            className="focus-ring flex h-5 w-5 items-center justify-center rounded-md text-slate-500 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-700"
           >
             <span aria-hidden="true" className="text-xs">
               {side === "left" ? "‹" : "›"}

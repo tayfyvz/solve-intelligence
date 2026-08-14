@@ -43,6 +43,9 @@ VOID_TAGS = {"hr"}  # rendered `<hr>`, never `<hr></hr>`; html is always ""
 HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 NO_COLLAPSE_TAGS = {"pre"}  # whitespace is significant inside a code block
 INLINE_DESCEND_TAGS = {"strong", "b", "em", "i", "s", "del", "strike", "code", "span"}
+# Removed with their contents at parse, the one place where dropping text is right: this
+# is `app.sanitize.STRIP_CONTENT_TAGS`, and T-DROP asserts the two are the same set.
+DROP_TAGS = {"script", "style"}
 
 # `li` is deliberately not a block tag: parse walks top-level children only, so a
 # <ul>/<ol> is ONE block whose html holds its <li>s verbatim. `code` and `br` likewise.
@@ -141,6 +144,27 @@ def escape_text(text: str) -> str:
     return _escape(text, quote=False)
 
 
+def collapse_text(text: str) -> str:
+    """Collapse runs of whitespace to single spaces, WITHOUT trimming the ends.
+
+    The counterpart of `_collapse_whitespace`'s first step, for text that is being
+    spliced INTO a block rather than replacing one.
+    """
+    return re.sub(r"\s+", " ", text)
+
+
+def canonical_text(text: str) -> str:
+    """The exact shape `parse()` would give this text if it were a block of its own.
+
+    LLM-authored prose routinely carries a trailing newline or a double space between
+    sentences. Written through `escape_text` alone, those bytes survive into Block.html,
+    the next parse collapses them, `render(after) != after_html`, and VF-E3 discards a
+    correct plan with a sentence about an internal invariant. Normalising at the point of
+    insertion is the fix; weakening the idempotence check is not.
+    """
+    return collapse_text(text).strip()
+
+
 # --------------------------------------------------------------------------- parse
 
 
@@ -200,6 +224,12 @@ def _collect(nodes: list, out: list[Tag], soup: BeautifulSoup, depth: int) -> No
 def _top_level_blocks(html: str) -> list[Tag]:
     # html.parser, never lxml: different auto-closing behaviour, and it is not a dependency.
     soup = BeautifulSoup(html, "html.parser")
+    # Dropped WITH their text, exactly as `sanitize.clean_content_tags` does it on the
+    # save path. Unwrapping them instead — the default for a tag we do not model — turns
+    # `<script>alert(1)</script>` into a visible paragraph reading "alert(1)": inert, but
+    # the AI path would be promoting to prose what Save deletes.
+    for element in soup.find_all(list(DROP_TAGS)):
+        element.decompose()
     out: list[Tag] = []
     _collect(list(soup.children), out, soup, 0)
     return out

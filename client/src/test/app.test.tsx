@@ -396,6 +396,36 @@ describe("App shell", () => {
     expect(screen.queryByText("Unsaved changes")).toBeNull();
   });
 
+  // The confirmed repro for the stale sidebar: the version IS created, but the
+  // list below the patent row kept showing two rows next to "3 versions" until a
+  // full page reload — because App commits the held-back switch the instant
+  // `dirty` clears, and that switch bumped the token the list fetch was captured
+  // against. Its response was dropped, and `listLoading` stuck on with it.
+  it("switching while dirty: Save as new version shows the new version in the list", async () => {
+    const user = userEvent.setup();
+    await renderOpenDocument([1, 2]);
+    act(() => store().setDirty(true));
+    createVersion.mockResolvedValue(version(1, 3, "<p>created v3</p>"));
+    listVersions.mockImplementation(async () => versionPage([1, 2, 3]));
+
+    await user.click(rowNamed("Version 1"));
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", {
+        name: "Save as new version",
+      }),
+    );
+
+    // The held-back switch went through, so the user is on version 1…
+    await waitFor(() => expect(store().versionNumber).toBe(1));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // …and the version they just created is in the sidebar, not missing until a
+    // reload.
+    expect(rowNamed("Version 3")).toBeTruthy();
+    expect(store().versions.map((v) => v.version_number)).toEqual([3, 2, 1]);
+    // The list controls are usable afterwards.
+    expect(store().listLoading).toBe(false);
+  });
+
   // The dirty-conditional buttons, and where they live: from a clean state "Save"
   // would be a no-op, so the only honest write left is a copy. All of it is in the
   // app bar now, alongside the patent and version it would write to.

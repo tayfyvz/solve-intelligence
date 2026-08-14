@@ -39,6 +39,7 @@ from app.routers.ai import (
     NO_OPERATIONS,
     NO_VISIBLE_CHANGE,
     NOTHING_TO_CHANGE,
+    RESULT_TOO_LARGE,
     SELECTION_TOO_LARGE,
     STALE_PROPOSAL,
     TIMEOUT_MESSAGE,
@@ -773,3 +774,137 @@ def test_no_message_on_this_surface_is_unspecified(client: TestClient, fake_runn
     source = Path(ai_module.__file__).read_text()
     # No string literal is passed straight to HTTPException — they are all named.
     assert not re.search(r'HTTPException\(\s*[^,]+,\s*["\']', source)
+
+
+# ------------------------------------------------- R24-R29: what the QA pass found
+
+
+TWO_CLAIMS = "<h1>Claims</h1><p>1. A widget.</p><p>2. The widget of claim 1.</p>"
+
+
+@pytest.mark.parametrize("route", ["chat", "apply"])
+def test_a_deletion_never_warns_twice_about_one_claim(
+    client: TestClient, fake_runner, route: str
+) -> None:
+    """R24 — the router's second `verify` must be told what the plan deleted.
+
+    Deleting claim 1 of two leaves old claim 2 — now claim 1 — reading "of claim 1". That
+    is the RENUMBER's doing, so `verify` suppresses the self-reference warning and reports
+    only the dangling one. Omitting `deleted_numbers` on the second pass brought the false
+    one back, and the user read two contradictory sentences about the same claim.
+    """
+    op = Op(kind="delete_claim", claim_number=1)
+    if route == "apply":
+        proposal = proposal_from(client, fake_runner, op, html=TWO_CLAIMS)
+        payload = client.post("/api/ai/apply", json={"html": TWO_CLAIMS, "proposal": proposal})
+    else:
+        fake_runner(edit(op))
+        payload = client.post("/api/ai/chat", json=chat_body(html=TWO_CLAIMS, consented=True))
+    assert payload.status_code == 200, payload.text
+    warnings = payload.json()["warnings"]
+
+    assert warnings == ["Claim 1 still refers to claim 1, which was deleted."]
+    # And the engine alone already said exactly that, which is the point of R6's rule:
+    # the route may add nothing the engine did not already know.
+    assert warnings == apply_plan(TWO_CLAIMS, [op]).warnings
+
+
+def test_instruction_length_is_measured_on_the_stripped_value(
+    client: TestClient, fake_runner
+) -> None:
+    """R25 — emptiness was checked after the strip and length before it, so 1,995 real
+    characters plus a trailing newline was rejected as "too long (limit 2,000)"."""
+    fake_runner(edit())
+    padded = "x" * 1_995 + "  \n  "
+    assert client.post("/api/ai/chat", json=chat_body(instruction=padded)).status_code == 200
+    assert fake_runner.calls[-1].instruction == "x" * 1_995
+
+    over = client.post("/api/ai/chat", json=chat_body(instruction="  " + "x" * 2_001 + "  "))
+    assert over.status_code == 422
+    assert over.json()["detail"] == INSTRUCTION_TOO_LONG
+
+
+def test_a_proposal_dated_in_the_future_expires(client: TestClient, fake_runner) -> None:
+    """R26 — the TTL was one-sided, so `created_at: 2999-01-01` never expired at all: the
+    one property the TTL exists to deny."""
+    good = proposal_from(client, fake_runner, OPS["format_claim"])
+
+    for created in (
+        "2999-01-01T00:00:00+00:00",
+        (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+    ):
+        response = client.post(
+            "/api/ai/apply", json={"html": SEED_1, "proposal": {**good, "created_at": created}}
+        )
+        assert response.status_code == 409, created
+        assert response.json()["detail"] == EXPIRED_PROPOSAL
+
+    # A client clock a few seconds fast is normal and must still apply.
+    skewed = (datetime.now(UTC) + timedelta(seconds=5)).isoformat()
+    ok = client.post(
+        "/api/ai/apply", json={"html": SEED_1, "proposal": {**good, "created_at": skewed}}
+    )
+    assert ok.status_code == 200, ok.text
+
+
+def test_an_edit_that_would_blow_the_size_cap_is_refused(client: TestClient, fake_runner) -> None:
+    """R27 — `max_html_chars` bounded the INPUT only, so twenty operations carrying 95,000
+    characters each returned 1.9 million characters of html: ~10x the AI cap and ~2x the
+    client's save cap, i.e. an edit the user is shown and then cannot save."""
+    huge = [
+        Op(kind="insert_claim", after_claim_number=2, text=f"A gadget number {i}. " + "x" * 95_000)
+        for i in range(20)
+    ]
+    proposal = proposal_from(client, fake_runner, *huge)
+    payload = client.post("/api/ai/apply", json={"html": SEED_1, "proposal": proposal}).json()
+
+    assert payload["status"] == "error"
+    assert payload["html"] is None
+    assert payload["message"] == RESULT_TOO_LARGE
+
+    # The same plan just inside the cap still applies: the cap is a bound, not a ban.
+    small = Op(kind="insert_claim", after_claim_number=2, text="A gadget. " + "x" * 1_000)
+    inside = proposal_from(client, fake_runner, small)
+    assert (
+        client.post("/api/ai/apply", json={"html": SEED_1, "proposal": inside}).json()["status"]
+        == "applied"
+    )
+
+
+def test_script_text_in_the_input_never_becomes_document_prose(
+    client: TestClient, fake_runner
+) -> None:
+    """R28 — /apply used to return `<p>alert(1)</p>` for a document that opened with a
+    `<script>`: inert, but the AI path was promoting to prose what Save deletes."""
+    html = "<script>alert(1)</script>" + TWO_CLAIMS
+    proposal = proposal_from(client, fake_runner, OPS["format_claim"], html=html)
+    payload = client.post("/api/ai/apply", json={"html": html, "proposal": proposal}).json()
+
+    assert payload["status"] == "applied"
+    assert "alert(1)" not in payload["html"]
+    assert payload["html"] == sanitize_html(payload["html"])
+
+
+@pytest.mark.parametrize("value", ["yes", "true", 1, "1"])
+def test_consent_must_be_an_actual_boolean(client: TestClient, fake_runner, value) -> None:
+    """R29 — the whole consent invariant turns on this one field, and pydantic's lax
+    coercion accepted the STRING "yes" as True. A client has to say it plainly."""
+    fake_runner(edit())
+    response = client.post("/api/ai/chat", json=chat_body(consented=value))
+    assert response.status_code == 422
+    assert isinstance(response.json()["detail"], list)
+
+
+@pytest.mark.parametrize("value", [True, "3"])
+def test_a_tampered_claim_number_is_rejected_not_coerced(
+    client: TestClient, fake_runner, value
+) -> None:
+    """R29's other half. `{"kind": "delete_claim", "claim_number": true}` coerced to 1 and
+    deleted claim 1 — a real claim destroyed by a value that is not a claim number."""
+    good = proposal_from(client, fake_runner, OPS["delete_claim"])
+    tampered = {**good["operations"][0], "claim_number": value}
+    response = client.post(
+        "/api/ai/apply", json={"html": SEED_1, "proposal": {**good, "operations": [tampered]}}
+    )
+    assert response.status_code == 422
+    assert isinstance(response.json()["detail"], list)

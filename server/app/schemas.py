@@ -1,22 +1,49 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StringConstraints,
+    model_validator,
+)
 
 from app.ai.schemas import Op
 from app.ai.verify import VerifyReport
 from app.models import MAX_TITLE_LENGTH, MAX_VERSION_NAME_LENGTH
+from app.sanitize import sanitize_text
+
+
+def _plain_text(value: str) -> str:
+    """The names' equivalent of the sanitiser every write of `content` passes.
+
+    It runs here rather than in the routers so that a name is clean before
+    anything compares it, stores it or quotes it back in a 409 — there is exactly
+    one gate, and it is the type.
+    """
+    cleaned = sanitize_text(value)
+    if not cleaned:
+        # Only reachable when the whole value was markup or control characters:
+        # the empty and whitespace-only cases were already rejected above.
+        raise ValueError("must contain text, not only markup")
+    return cleaned
+
 
 # strip_whitespace runs before the length checks, so "   " is a 422 for being
 # empty rather than being stored as a name made of spaces. Names are stored in
-# exactly the trimmed form validated here.
+# exactly the trimmed, sanitised form validated here.
 Title = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_TITLE_LENGTH),
+    AfterValidator(_plain_text),
 ]
 VersionName = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_VERSION_NAME_LENGTH),
+    AfterValidator(_plain_text),
 ]
 
 
@@ -217,7 +244,10 @@ class AiChatRequest(BaseModel):
     history: list[ChatTurn] = Field(default_factory=list)
     # THE PROMPT DECISION, supplied by the client. True means the user has already
     # approved AI editing of exactly this document AND this version.
-    consented: bool = False
+    # StrictBool: this one boolean is the whole consent invariant, and lax coercion
+    # accepts the string "yes" as True. A client that has to say it plainly cannot say it
+    # by accident.
+    consented: StrictBool = False
     # --- the clarification loop ------------------------------------------------
     pending_question: str | None = None  # the clarifying question we asked last turn
     clarify_count: int = 0  # consecutive clarifications so far; CLAMPED in the router

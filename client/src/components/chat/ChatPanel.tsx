@@ -97,7 +97,9 @@ export default function ChatPanel({ documentId, versionNumber }: ChatPanelProps)
   const applying = useRef(false);
   /** True from just before the aiChat await until the finally. A REF, not `sending`,
    *  because the version-change effect reads it from a closure with deps [versionNumber]
-   *  and would otherwise see a stale value. */
+   *  and would otherwise see a stale value — and because it doubles as send()'s
+   *  idempotency guard: React re-renders the disabled Send button too late, so four
+   *  clicks inside one frame all read `sending === false` and fire four requests. */
   const inFlight = useRef(false);
   const citationTimer = useRef<number | null>(null);
   const lastInstruction = useRef("");
@@ -172,7 +174,10 @@ export default function ChatPanel({ documentId, versionNumber }: ChatPanelProps)
 
   async function send(text?: string): Promise<void> {
     const instruction = (text ?? input).trim();
-    if (!instruction || sending) return;
+    // `inFlight` first: it is the ref, updated synchronously, and it is what stops
+    // the second, third and fourth click of the same frame. `sending` is kept as
+    // the readable state check for everything after the first render.
+    if (!instruction || inFlight.current || sending) return;
 
     const ed = useDocumentStore.getState().editor;
     if (!ed || ed.isDestroyed) {
@@ -359,12 +364,18 @@ export default function ChatPanel({ documentId, versionNumber }: ChatPanelProps)
     applying.current = true;
     setSending(true);
     try {
+      // Both of these used to return in silence: the user clicked "Apply these
+      // changes" and literally nothing happened — no bubble, and the button still
+      // on screen offering to do it again. Every other exit from this function
+      // says something, and so do these.
       const ed = useDocumentStore.getState().editor;
-      if (!ed || ed.isDestroyed) return;
-
       const docId = documentId;
       const verNum = versionNumber;
-      if (docId === null || verNum === null) return;
+      if (!ed || ed.isDestroyed || docId === null || verNum === null) {
+        resolveProposal(messageId, "failed");
+        pushAssistant({ tone: "error", text: "There is no open document to edit." });
+        return;
+      }
 
       // CAPTURED ONCE, before the await — exactly as send() does, and for exactly the same
       // reason. This is the LIVE buffer re-read now (the user may have typed since the
@@ -437,6 +448,25 @@ export default function ChatPanel({ documentId, versionNumber }: ChatPanelProps)
       }
 
       resolveProposal(messageId, "applied");
+
+      // THE STORE'S DRIFT GUARD FIRED. A created version always has a HIGHER number
+      // than the one we were on, so "unchanged" means exactly one thing: the user typed
+      // while the version was saving, so the store kept them here with their keystrokes
+      // rather than remounting the editor and destroying them. The version exists; we
+      // are not on it, so we must not claim to be, and consent belongs to the version
+      // the user is looking at — which is not the reviewed one.
+      if (after.versionNumber === verNum) {
+        pushAssistant({
+          tone: "system",
+          text:
+            `The change was saved as a new version, but you typed while it was saving — so ` +
+            `you are still on version ${verNum} with unsaved changes. Open the newest version ` +
+            `in the sidebar to see the AI's copy.`,
+          warnings: res.warnings,
+        });
+        return;
+      }
+
       // after.versionNumber is non-null here: saveAsNewVersion returned true, which is only
       // reachable from the branch that set it. Narrowed rather than asserted.
       const saved = after.versionNumber;

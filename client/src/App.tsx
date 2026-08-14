@@ -232,9 +232,13 @@ export default function App() {
             document is the editor *inside* this cell, so the header and the error
             banner stay pinned instead of scrolling away with the claims. */}
         <main className="flex min-h-[26rem] min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:min-h-0">
-          {/* While a dialog is open it renders the error itself, so the banner
-              stands down rather than showing the same sentence twice. */}
-          {error && !pending && !createOpen && (
+          {/* The dirty dialog renders the shared `error` itself, so the banner
+              stands down rather than showing the same sentence twice. The New
+              patent dialog is NOT in this condition: it renders only the message
+              from its own submit (`messageOnFailure` clears the shared slot), so
+              suppressing the banner while it is open hid background failures with
+              nothing else to show them. */}
+          {error && !pending && (
             <div
               role="alert"
               className="flex items-start gap-3 border-b border-red-200 bg-red-50 px-4 py-2 text-[0.8125rem] text-red-700"

@@ -11,6 +11,7 @@ from typing import get_args
 
 import pytest
 from openai.lib._pydantic import to_strict_json_schema
+from pydantic import ValidationError
 
 from app.ai.operations import OPS
 from app.ai.schemas import (
@@ -123,6 +124,23 @@ def test_require_enforces_bounds() -> None:
                 position="before_claims",
             )
         )
+
+
+@pytest.mark.parametrize("field_name", ["claim_number", "after_claim_number"])
+@pytest.mark.parametrize("value", [True, False, "3", 3.0])
+def test_a_claim_number_is_only_ever_an_integer(field_name: str, value: object) -> None:
+    """P10 — lax coercion read `true` as claim 1 and `"3"` as claim 3, so a malformed
+    operation deleted a real claim instead of being refused. These two fields decide
+    WHICH claim an operation touches; nothing may be coerced into one."""
+    with pytest.raises(ValidationError):
+        Op(kind="delete_claim", **{field_name: value})
+
+
+def test_strictness_adds_no_schema_constraint() -> None:
+    """P10's other half: StrictInt is a parsing rule, not a JSON-schema keyword, so P2's
+    "no constraints on a planner-facing model" is untouched by it."""
+    schema = to_strict_json_schema(Op)
+    assert schema["properties"]["claim_number"]["anyOf"][0] == {"type": "integer"}
 
 
 @pytest.mark.parametrize(

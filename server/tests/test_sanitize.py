@@ -6,7 +6,7 @@ Stripping a tag StarterKit renders destroys the user's content on save, so the
 
 import pytest
 
-from app.sanitize import sanitize_html
+from app.sanitize import sanitize_html, sanitize_text
 
 STRIPPED = [
     ("<script>alert(1)</script><p>a</p>", "<p>a</p>"),
@@ -46,6 +46,31 @@ def test_dangerous_html_is_stripped(html: str, expected: str) -> None:
 def test_editor_html_survives_unchanged() -> None:
     for html in PRESERVED:
         assert sanitize_html(html) == html
+
+
+TEXT = [
+    ("<script>alert(1)</script>Widget", "Widget"),
+    ("<b>Widget</b>", "Widget"),
+    ('<img src="x" onerror="alert(1)">Widget', "Widget"),
+    ("Widget\r\nfor\tblood", "Widget for blood"),  # a name is one line
+    ("Widget\x00\x07", "Widget"),
+    # The half that matters as much: ordinary punctuation in a real patent title.
+    ("R&D widget", "R&D widget"),
+    ("Method for cooling to T < 50 °C", "Method for cooling to T < 50 °C"),
+    (
+        "Wireless optogenetic device — v2 (100 % duty)",
+        "Wireless optogenetic device — v2 (100 % duty)",
+    ),
+]
+
+
+@pytest.mark.parametrize(("raw", "expected"), TEXT)
+def test_names_are_reduced_to_plain_text(raw: str, expected: str) -> None:
+    """`content` was the only field that passed a sanitiser, leaving a title and a
+    version name as the one string on this server that reaches a browser exactly
+    as typed. Defence in depth — React escapes today — but these names are also
+    quoted back inside 409 messages."""
+    assert sanitize_text(raw) == expected
 
 
 def test_title_and_lang_survive_despite_the_attribute_allowlist() -> None:

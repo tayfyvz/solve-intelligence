@@ -88,6 +88,39 @@ def test_create_accepts_a_title_at_the_length_limit(client: TestClient) -> None:
     assert client.post(DOCUMENTS, json={"title": "x" * 200}).status_code == 201
 
 
+def test_titles_and_version_names_are_stored_as_plain_text(client: TestClient) -> None:
+    """The name equivalent of `test_create_sanitises_and_caps_content_like_any_other
+    _write`: both plain-text fields go through the sanitiser, on create and on
+    rename, and what is stored is what is echoed."""
+    created = client.post(DOCUMENTS, json={"title": "<script>alert(1)</script>Widget"})
+    assert created.status_code == 201
+    assert created.json()["title"] == "Widget"
+    assert client.get(f"{DOCUMENTS}/{created.json()['id']}").json()["title"] == "Widget"
+
+    renamed = client.patch(f"{DOCUMENTS}/1", json={"title": "<b>Bold</b>\r\ntitle"})
+    assert renamed.json()["title"] == "Bold title"
+
+    named = client.post(f"{DOCUMENTS}/1/versions", json={"content": "", "name": "<i>Draft</i>"})
+    assert named.json()["name"] == "Draft"
+    assert (
+        client.patch(f"{DOCUMENTS}/1/versions/1", json={"name": "<i>Filed</i>"}).json()["name"]
+        == "Filed"
+    )
+
+    # A name that is nothing but markup has no plain text left, so it is a 422 —
+    # never an empty title slipping past the min_length that ran before it.
+    assert client.post(DOCUMENTS, json={"title": "<script>alert(1)</script>"}).status_code == 422
+
+
+def test_sanitising_names_leaves_the_conflict_and_length_rules_alone(client: TestClient) -> None:
+    """The regression risk in sanitising an identifier: uniqueness is compared on
+    the sanitised form, and the length limit still applies to what a user typed."""
+    assert client.post(DOCUMENTS, json={"title": f"<b>{SEED_TITLE}</b>"}).status_code == 409
+    assert client.post(DOCUMENTS, json={"title": "x" * 200}).status_code == 201
+    assert client.post(DOCUMENTS, json={"title": "y" * 201}).status_code == 422
+    assert client.patch(f"{DOCUMENTS}/1/versions/1", json={"name": "z" * 101}).status_code == 422
+
+
 def test_rename_patent(client: TestClient) -> None:
     response = client.patch(f"{DOCUMENTS}/1", json={"title": "  Renamed  "})
 

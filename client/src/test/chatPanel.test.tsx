@@ -1283,6 +1283,121 @@ it("CP-31 clarification options send verbatim and disable while sending", async 
   });
 });
 
+// CP-32. Confirmed live: four clicks on Send inside one frame fired four POSTs.
+// React re-renders the disabled button too late, so all four read `sending ===
+// false`; the ref is what stops them. The drift guard saved correctness, at the
+// cost of three LLM calls and three confusing "you edited the document" bubbles.
+it("CP-32 four rapid clicks on Send fire exactly one request", async () => {
+  const editor = fakeEditor();
+  open(editor);
+  const chat = deferred<AiChatResponse>();
+  aiChat.mockReturnValue(chat.promise);
+  render(<Harness />);
+
+  await user().type(screen.getByLabelText("Ask the AI"), "delete claim 3");
+  const send = screen.getByRole("button", { name: "Send" });
+  await act(async () => {
+    send.click();
+    send.click();
+    send.click();
+    send.click();
+  });
+
+  expect(aiChat).toHaveBeenCalledTimes(1);
+  // One request means one question in the transcript, too.
+  expect(screen.getAllByText("delete claim 3")).toHaveLength(1);
+
+  await act(async () => {
+    chat.resolve(chatResponse({ status: "answer", html: null, message: "Claim 3 covers X." }));
+  });
+  expect(screen.queryByText(DRIFT)).toBeNull();
+});
+
+// CP-32b. The store's drift guard on the AI's own version save: the user types
+// during the POST, so the store keeps them where they are rather than remounting
+// the editor on the server's echo. The panel must not then claim they moved.
+it("CP-32b typing during the AI's version save keeps the text and says so", async () => {
+  const editor = fakeEditor();
+  open(editor);
+  aiChat.mockResolvedValue(proposalResponse());
+  aiApply.mockResolvedValue(applyResponse());
+  const save = deferred<VersionRead>();
+  createVersion.mockReturnValue(save.promise);
+  render(<Harness />);
+
+  await ask("delete claim 3");
+  await waitFor(() => expect(applyButton()).not.toBeNull());
+  await user().click(applyButton()!);
+  await waitFor(() => expect(createVersion).toHaveBeenCalled());
+
+  await act(async () => {
+    editor.setHtml("<p>applied and then typed</p>"); // the user types mid-save
+    save.resolve(versionRead(3));
+  });
+
+  await waitFor(() => expect(screen.getByText(/still on version 2/)).toBeTruthy());
+  // The version was created — but we stayed put, so the keystrokes are intact.
+  expect(store().versionNumber).toBe(2);
+  expect(store().dirty).toBe(true);
+  expect(editor.getHTML()).toBe("<p>applied and then typed</p>");
+  expect(screen.queryByText(/Saved as version 3\./)).toBeNull();
+});
+
+// CP-33. Both of these guards used to return in silence: the user clicked "Apply
+// these changes" and nothing happened at all — no bubble, and the button still
+// offering to do it again.
+it("CP-33 Apply with no editor explains itself instead of doing nothing", async () => {
+  const editor = fakeEditor();
+  open(editor);
+  aiChat.mockResolvedValue(proposalResponse());
+  render(<Harness />);
+
+  await ask("delete claim 3");
+  await waitFor(() => expect(applyButton()).not.toBeNull());
+  act(() => {
+    useDocumentStore.setState({ editor: null });
+  });
+
+  await user().click(applyButton()!);
+
+  await waitFor(() =>
+    expect(screen.getByText("There is no open document to edit.")).toBeTruthy(),
+  );
+  expect(aiApply).not.toHaveBeenCalled();
+  expect(screen.getByText("Not applied")).toBeTruthy();
+  expect(applyButton()).toBeNull();
+});
+
+// CP-34. TxtDropZone sends its rejections to the transcript on the stated grounds
+// that the transcript "is already a live region". It was not one, so file
+// rejections, AI replies and error bubbles reached a screen reader as silence.
+it("CP-34 the transcript is a live region", async () => {
+  open(fakeEditor());
+  render(<Harness />);
+
+  const transcript = screen.getByTestId("message-list");
+  // On the CONTAINER, which exists from mount: an aria-live element added at the
+  // same moment as its first child announces nothing.
+  expect(transcript.getAttribute("role")).toBe("log");
+  expect(transcript.getAttribute("aria-live")).toBe("polite");
+});
+
+// CP-35. The server's limit is a good sentence, but it arrives after the round
+// trip and after the composer has been cleared — so the typed text is gone.
+it("CP-35 the composer caps the instruction at the server's limit and counts up to it", async () => {
+  open(fakeEditor());
+  render(<Harness />);
+
+  const field = screen.getByLabelText("Ask the AI") as HTMLTextAreaElement;
+  expect(field.maxLength).toBe(2_000);
+
+  const person = user();
+  await person.click(field);
+  await person.paste("x".repeat(1_900));
+
+  expect(screen.getByText("1900 / 2000 characters")).toBeTruthy();
+});
+
 // CP-31, second half: the `disabled={sending}` wiring, asserted where it is
 // observable. A send always appends a user bubble, so the option bubble stops being
 // last and its buttons unmount — the panel can never show them disabled.

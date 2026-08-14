@@ -7,6 +7,10 @@ One contract, shared by all six:
   can read". A legal document is not a place to guess;
 - claims are addressed by **uid**, never by number. `uid is None` means the number the
   planner emitted does not exist in this document;
+- **model-authored text enters `Block.html` through `escape_text(canonical_text(…))`,
+  never through `escape_text` alone.** `parse()` collapses whitespace, so text carrying a
+  trailing newline or a double space would render back into a document the next parse
+  reads differently — and VF-E3 would throw the whole plan away for it;
 - an operation never receives the `ApplyCtx`. Where one needs shared apply-time state,
   the adapter in `OPS` passes that *field* explicitly. Handing over the whole context
   would let any operation reach any field, which is exactly the coupling that makes
@@ -30,11 +34,14 @@ from app.ai.document import (
     MARK_ALIASES,
     MARK_ORDER,
     MARK_TAGS,
+    NO_COLLAPSE_TAGS,
     Block,
     Claim,
     ParsedDocument,
     all_blocks,
     block_text,
+    canonical_text,
+    collapse_text,
     escape_text,
 )
 
@@ -180,7 +187,7 @@ def insert_claim(
             number=0,  # a placeholder; renumber fixes it
             # So a `1) 2) 3)` document never gains a `4.` claim.
             separator=doc.claims[0].separator if doc.claims else ".",
-            blocks=[Block("p", escape_text(text))],
+            blocks=[Block("p", escape_text(canonical_text(text)))],
         ),
     )
     if not at_start and after_uid is not None:
@@ -208,7 +215,7 @@ def replace_claim(
         warnings.append(W_LOST_PARAGRAPHS.format(number=claim.number, count=len(claim.blocks)))
     if any(b.marks for b in claim.blocks):
         warnings.append(W_LOST_FORMATTING.format(number=claim.number))
-    claim.blocks = [Block("p", escape_text(text))]
+    claim.blocks = [Block("p", escape_text(canonical_text(text)))]
 
 
 def insert_section(
@@ -223,14 +230,14 @@ def insert_section(
 
     blocks: list[Block] = []
     if heading.strip():
-        blocks.append(Block(tag, escape_text(heading)))
+        blocks.append(Block(tag, escape_text(canonical_text(heading))))
     else:
         warnings.append(W_NO_HEADING)
 
     bodies = [p for p in paragraphs if p.strip()]
     if not bodies:
         warnings.append(W_NO_PARAGRAPHS.format(heading=heading))
-    blocks += [Block("p", escape_text(p)) for p in bodies]
+    blocks += [Block("p", escape_text(canonical_text(p))) for p in bodies]
 
     if not blocks:
         return
@@ -258,13 +265,23 @@ def replace_text(doc: ParsedDocument, find: str, replace: str, warnings: list[st
         warnings.append(W_EMPTY_FIND)
         return
 
-    needle, sub = escape_text(find), escape_text(replace)
+    # Collapsed but NOT trimmed: a needle is matched inside a block, where a leading or
+    # trailing space is part of what the user asked for — while a RUN of whitespace can
+    # never appear in Block.html, so an uncollapsed needle simply never matches.
+    find = collapse_text(find)
+    needle, sub = escape_text(find), escape_text(collapse_text(replace))
     hits = 0
     split = False
     for block in all_blocks(doc):
         if needle in block.html:
             hits += block.html.count(needle)
             block.html = block.html.replace(needle, sub)
+            if block.tag not in NO_COLLAPSE_TAGS:
+                # The SPLICE can create whitespace the replacement itself does not carry:
+                # "the widget of" with "gizmo " gives "the gizmo  of". Canonicalise the
+                # spliced block, not just the substitution — `pre` excepted, because
+                # parse() leaves its whitespace alone and so must this.
+                block.html = canonical_text(block.html)
         elif find in block_text(block):
             # The honest degradation for a needle spanning tags. Cross-tag surgery is
             # impossible to defend live and impossible to test exhaustively.

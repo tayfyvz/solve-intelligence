@@ -342,3 +342,70 @@ def test_dangling_reference_warning_names_the_new_number() -> None:
     result = apply_plan(html, [delete(1), delete(2)])
     assert result.html is not None
     assert W_DANGLING_REF.format(number=1, old=2) in result.warnings
+
+
+# ---------------------------------------------------------------- A18: model whitespace
+
+# Every shape an LLM routinely emits around a sentence. A trailing newline is the common
+# one; the double space between sentences is the one nobody would think to test.
+WHITESPACE_SHAPES = [
+    ("trailing space", "A gadget comprising a lever. "),
+    ("leading space", " A gadget comprising a lever."),
+    ("double space", "A gadget  comprising a lever."),
+    ("tab", "A gadget\tcomprising a lever."),
+    ("newline", "A gadget comprising a lever.\n"),
+    ("leading newline and indent", "\n    A gadget comprising a lever."),
+]
+WS_IDS = [label for label, _ in WHITESPACE_SHAPES]
+CLEAN = "A gadget comprising a lever."
+
+
+@pytest.mark.parametrize(("label", "text"), WHITESPACE_SHAPES, ids=WS_IDS)
+def test_non_canonical_whitespace_in_new_claim_text_still_applies(label: str, text: str) -> None:
+    """A18 — the highest-severity row here: written through `escape_text` alone, a
+    trailing newline made `render(after) != after_html`, VF-E3 fired, and a CORRECT plan
+    was discarded whole with a sentence naming an internal invariant. The fix normalises
+    at the point of insertion; E_UNSTABLE keeps its job."""
+    result = apply_plan(SEED_1, [insert(2, text)])
+    assert result.html is not None, result.report.errors
+    assert result.report.ok
+    assert parse(result.html).claims[2].blocks[0].html.startswith("A gadget")
+
+
+@pytest.mark.parametrize(("label", "text"), WHITESPACE_SHAPES, ids=WS_IDS)
+def test_non_canonical_whitespace_is_identical_to_the_clean_string(label: str, text: str) -> None:
+    """A18 — and not merely "it applied": every shape must produce the SAME BYTES as the
+    single-spaced string, across all four operations that carry model-authored text."""
+    for op, clean in (
+        (Op(kind="insert_claim", after_claim_number=2, text=text), insert(2, CLEAN)),
+        (
+            Op(kind="replace_claim", claim_number=4, text=text),
+            Op(kind="replace_claim", claim_number=4, text=CLEAN),
+        ),
+        (
+            Op(kind="insert_section", heading=text, paragraphs=[text], position="before_claims"),
+            Op(kind="insert_section", heading=CLEAN, paragraphs=[CLEAN], position="before_claims"),
+        ),
+        (
+            Op(kind="replace_text", find="lever", replace=text),
+            Op(kind="replace_text", find="lever", replace=CLEAN),
+        ),
+    ):
+        assert applied(SEED_1, [op]) == applied(SEED_1, [clean]), (label, op.kind)
+
+
+def test_a_replacement_spliced_mid_sentence_stays_canonical() -> None:
+    """A18 — the shape the substitution's own normalisation cannot fix: "the device of"
+    with "apparatus " gives "the apparatus  of", a run of whitespace the next parse
+    collapses. The spliced BLOCK is canonicalised, not just the substitution."""
+    out = applied(SEED_1, [Op(kind="replace_text", find="device", replace="apparatus\n")])
+    assert "  " not in out
+    assert "apparatus" in out
+
+
+def test_pre_block_whitespace_survives_a_replacement() -> None:
+    """A18's exception. `pre` is the one block parse() does not collapse, so neither may
+    the applier — a code sample is content, not stray formatting."""
+    html = "<pre>let  x = 1;</pre><h1>Claims</h1><p>1. A device.</p><p>2. A method.</p>"
+    out = applied(html, [Op(kind="replace_text", find="let", replace="const")])
+    assert "<pre>const  x = 1;</pre>" in out

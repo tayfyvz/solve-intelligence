@@ -54,6 +54,12 @@ export default function Editor({ content }: EditorProps) {
         // Measure, paper and typography all live on `.editor` in index.css — the
         // padding is not a utility here because the sheet needs it responsively.
         class: "editor outline-none",
+        // A bare <div> is a generic element, and ARIA forbids naming one: the
+        // aria-label was being dropped, so the editor reached screen readers
+        // unnamed. `textbox` + `aria-multiline` is the conventional role for a
+        // contenteditable rich-text surface, and it is what makes the name legal.
+        role: "textbox",
+        "aria-multiline": "true",
         "aria-label": "Patent document",
       },
     },

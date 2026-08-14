@@ -83,6 +83,14 @@ export default function MessageList({
     <div
       ref={container}
       data-testid="message-list"
+      // The live region is the CONTAINER, not the <ul> inside it: an aria-live
+      // element has to be in the DOM *before* content is added to it, and the
+      // <ul> is created by the very first message. This is what makes
+      // TxtDropZone's "the transcript is already a live region" true — file
+      // rejections, AI replies and error bubbles all announce.
+      role="log"
+      aria-live="polite"
+      aria-label="Chat transcript"
       onScroll={(event) => {
         const element = event.currentTarget;
         wasAtBottom.current =

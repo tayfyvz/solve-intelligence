@@ -89,7 +89,7 @@ export default function TreeRow({
         type="button"
         aria-label={renameLabel}
         onClick={onEdit}
-        className="focus-ring flex w-6 shrink-0 items-center justify-center rounded-md text-slate-400 opacity-60 transition-opacity duration-150 hover:bg-slate-200/60 hover:text-slate-700 focus-visible:opacity-100 group-hover:opacity-100 max-lg:opacity-100"
+        className="focus-ring flex w-6 shrink-0 items-center justify-center rounded-md text-slate-700 opacity-60 transition-opacity duration-150 hover:bg-slate-200/60 hover:text-slate-700 focus-visible:opacity-100 group-hover:opacity-100 max-lg:opacity-100"
       >
         {/* Pencil. aria-hidden because the button already has a name. */}
         <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5">

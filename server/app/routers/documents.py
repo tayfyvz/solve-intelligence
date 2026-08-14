@@ -25,7 +25,8 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 
 # SQLite's INTEGER is 64-bit. Without an upper bound, a larger integer passes
 # FastAPI's `int` validation and raises OverflowError inside the driver — a 500
-# where the caller should get a 422.
+# where the caller should get a 422. It bounds `offset` for the same reason: it
+# reaches the same driver, as the OFFSET of a query rather than as an id.
 MAX_ID = 2**63 - 1
 
 # Paging bounds. The max is a guard on response size, not a preference: without
@@ -89,7 +90,7 @@ def _version_name_conflict(name: str) -> HTTPException:
 @router.get("", response_model=DocumentPage)
 def list_documents(
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=MAX_ID),
     db: Session = Depends(get_db),
 ) -> DocumentPage:
     """An offset past the end is an empty page, not a 404: it is a stale link,
@@ -148,7 +149,7 @@ def rename_document(
 def list_versions(
     document_id: int = Path(ge=1, le=MAX_ID),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=MAX_ID),
     db: Session = Depends(get_db),
 ) -> VersionPage:
     """Newest first, because that is the draft the user is most likely after."""

@@ -95,6 +95,15 @@ function fakeEditor(html = "<p>live</p>"): Editor {
   return { getHTML: () => html } as unknown as Editor;
 }
 
+/**
+ * The same two-field contract, but reading a value the test can change *during*
+ * a request — which is the only way to write the drift guards, because they
+ * compare `getHTML()` before the await with `getHTML()` after it.
+ */
+function mutableEditor(read: () => string): Editor {
+  return { getHTML: read } as unknown as Editor;
+}
+
 // The store itself is reset in `test/setup.ts`'s afterEach.
 beforeEach(() => {
   for (const fn of [
@@ -224,18 +233,21 @@ describe("selection ordering", () => {
     expect(store().content).toBe("<p>doc 1 v2</p>");
   });
 
-  // The failure path of both selection actions. `loading` already unmounted the
-  // editor, so it remounts on the last *saved* content — the edits are genuinely
-  // gone. Leaving `dirty` set made the bar claim "Unsaved changes" over content
-  // that had just been discarded, and re-opened the dialog on the next switch.
-  // Repro: backend down -> type -> switch version -> Discard.
-  it("a failed switch clears dirty, because the edits are already gone", async () => {
+  // The failure path of both selection actions. App keeps the editor MOUNTED
+  // while loading — it only dims it — and a failed switch leaves documentId and
+  // versionNumber where they were, so the remount key never changes and the
+  // user's edited text is still on screen. Clearing `dirty` over it removed the
+  // badge, the beforeunload guard and the dialog on the next switch, and the next
+  // switch then discarded the edits in silence.
+  // Repro: backend down -> type -> switch version -> the text is still there.
+  it("a failed switch leaves dirty set, because the edits are still on screen", async () => {
     getVersion.mockRejectedValue(new Error("Cannot reach the server."));
     useDocumentStore.setState({ documentId: 1, versionNumber: 1, dirty: true });
 
     await store().selectVersion(2);
 
-    expect(store().dirty).toBe(false);
+    expect(store().dirty).toBe(true);
+    expect(store().versionNumber).toBe(1); // nothing moved, so nothing remounted
     expect(store().error).toBe("Cannot reach the server.");
     expect(store().loading).toBe(false);
 
@@ -245,7 +257,8 @@ describe("selection ordering", () => {
 
     await store().selectDocument(2);
 
-    expect(store().dirty).toBe(false);
+    expect(store().dirty).toBe(true);
+    expect(store().documentId).toBe(1);
     expect(store().error).toBe("Cannot reach the server.");
   });
 
@@ -457,6 +470,25 @@ describe("appending versions", () => {
     expect(store().dirty).toBe(true);
   });
 
+  // S11 — every early return used to skip the flag, and nothing later clears it:
+  // one click on a patent row during a list fetch left the pager and "Show more
+  // versions" disabled for the rest of the session.
+  it("listLoading clears even when the list response is discarded as stale", async () => {
+    listVersions.mockImplementation(async () => {
+      await delay(30);
+      return versionPage([1]);
+    });
+    getDocument.mockResolvedValue(detail(2));
+    getVersion.mockResolvedValue(version(2, 1));
+    useDocumentStore.setState({ documentId: 1 });
+
+    const listing = store().loadVersions(0);
+    await store().selectDocument(2); // bumps the token: `listing` is now stale
+    await listing;
+
+    expect(store().listLoading).toBe(false);
+  });
+
   it("a malformed page while appending explains itself and keeps the list", async () => {
     listVersions.mockResolvedValue(null as unknown as VersionPage);
     useDocumentStore.setState({
@@ -628,6 +660,76 @@ describe("saving", () => {
     expect(store().content).toBe("<p>doc 2 v1</p>");
     expect(store().dirty).toBe(true);
     expect(store().saving).toBe(false);
+  });
+
+  // S9 — the confirmed data-loss repro: throttle the network, type, Save, keep
+  // typing. Those keystrokes are NOT in the PUT, so clearing `dirty` over them
+  // drops the badge, the beforeunload guard and the dirty dialog, and the next
+  // version switch discards them without a word.
+  it("a save does not clear dirty for keystrokes typed while it was in flight", async () => {
+    let html = "<p>typed</p>";
+    useDocumentStore.setState({ editor: mutableEditor(() => html) });
+    updateVersion.mockImplementation(async () => {
+      await delay(20);
+      return { ...version(1, 2), updated_at: "2026-03-03T00:00:00" };
+    });
+
+    const saving = store().save();
+    html = "<p>typed DURING-SAVE</p>"; // the user keeps typing
+
+    await expect(saving).resolves.toBe(true);
+
+    expect(updateVersion).toHaveBeenCalledWith(1, 2, "<p>typed</p>"); // what the server got
+    expect(store().dirty).toBe(true); // …which is not what the editor holds
+    expect(store().saving).toBe(false);
+  });
+
+  // The same rule on the other save, where getting it wrong is worse: moving
+  // `versionNumber` changes App's remount key, so the keystrokes are not merely
+  // marked saved, they are destroyed.
+  it("saveAsNewVersion keeps keystrokes typed during it, and does not remount", async () => {
+    let html = "<p>typed</p>";
+    useDocumentStore.setState({ editor: mutableEditor(() => html) });
+    createVersion.mockImplementation(async () => {
+      await delay(20);
+      return version(1, 3, "<p>sanitised by nh3</p>");
+    });
+    listVersions.mockResolvedValue(versionPage([1, 2, 3], { total: 3 }));
+
+    const saving = store().saveAsNewVersion();
+    html = "<p>typed DURING-SAVE</p>";
+
+    await expect(saving).resolves.toBe(true);
+
+    expect(createVersion).toHaveBeenCalledWith(1, "<p>typed</p>", null);
+    // The version exists and is in the list — but the user stays where they are,
+    // with their text and their dirty flag.
+    expect(store().versions.map((v) => v.version_number)).toEqual([3, 2, 1]);
+    expect(store().versionNumber).toBe(2);
+    expect(store().content).toBe("<p>doc 1 v2</p>");
+    expect(store().dirty).toBe(true);
+  });
+
+  // S10 — the stale-sidebar repro: with unsaved edits, click another version and
+  // answer the dialog with "Save as new version". App commits the held-back switch
+  // the instant `dirty` goes false, and that switch bumps the request token — so
+  // the version list must already be refreshed by then, or its response is
+  // discarded and the new version is invisible until a full reload.
+  it("the created version is in the list before dirty clears", async () => {
+    createVersion.mockResolvedValue(version(1, 3));
+    listVersions.mockResolvedValue(versionPage([1, 2, 3], { total: 3 }));
+
+    let versionsWhenClean: number[] | null = null;
+    const unsubscribe = useDocumentStore.subscribe((state) => {
+      if (!state.dirty && versionsWhenClean === null) {
+        versionsWhenClean = state.versions.map((v) => v.version_number);
+      }
+    });
+
+    await expect(store().saveAsNewVersion()).resolves.toBe(true);
+    unsubscribe();
+
+    expect(versionsWhenClean).toEqual([3, 2, 1]);
   });
 
   it("reports a failed save instead of clearing the dirty flag", async () => {

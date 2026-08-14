@@ -82,6 +82,11 @@ MODEL_MISSING_MESSAGE = "The configured AI model is not available. Check OPENAI_
 UPSTREAM_MESSAGE = "The AI service returned an error. Your document was not changed."
 TIMEOUT_MESSAGE = "The AI took too long to respond. Your document was not changed."
 
+RESULT_TOO_LARGE = (
+    "That change would make the document too large (limit 200,000 characters). "
+    "Please ask for a smaller change."
+)
+
 NOTHING_TO_CHANGE = "I couldn't find anything to change."
 NO_VISIBLE_CHANGE = "Applying that produced no change to the document."
 INVALID_SUGGESTION = "This suggestion is no longer valid: {reason}"
@@ -113,6 +118,11 @@ _OPENAI_STATUS: tuple[tuple[type[Exception], int, str], ...] = (
 )
 
 
+# How far into the future a proposal's `created_at` may sit before it is treated as
+# expired. The client stamps it from its own clock, so a small skew is normal.
+CLOCK_SKEW_SECONDS = 60
+
+
 def _cap_or_413(value: str, cap: int, message: str) -> None:
     """Every size cap on this surface is a 413 with a sentence.
 
@@ -140,6 +150,13 @@ def _apply_and_verify(
     if result.html is None:  # 2. the plan was refused, or verify
         return ("error", result.report.errors[0], None, None, result.warnings)
 
+    # 2b. The INPUT cap bounds `body.html`, and twenty operations carrying 95,000
+    #     characters each bound nothing at all: the result was ~10x the AI cap and ~2x the
+    #     client's save cap, so the user would be shown an edit they could never save.
+    #     Same cap, same unit, on the way out.
+    if len(result.html) > settings.max_html_chars:
+        return ("error", RESULT_TOO_LARGE, None, None, result.warnings)
+
     # 3. Did the OPERATIONS change anything? Compare in ONE space: the engine's own
     #    canonical form. `result.html` is canonical by construction; the client's bytes
     #    may not be (a pasted <div>, a stray newline), so comparing them directly reports
@@ -153,7 +170,11 @@ def _apply_and_verify(
     #    count was already checked in step 1 against the pre-sanitised render; passing it
     #    again would re-assert the same fact against a string a different component
     #    produced. What is being checked here is that nh3 did not break canonical form.
-    report = verify(html, out, expected_claims=None)
+    #    `deleted_numbers` IS passed: it is not a fact about the applier's belief but a
+    #    fact about the plan, and dropping it re-introduces exactly the self-reference
+    #    warning verify.py suppresses on purpose — so the user reads two contradictory
+    #    sentences about one claim, only the first of which is true.
+    report = verify(html, out, expected_claims=None, deleted_numbers=result.deleted_numbers)
     if report.errors:
         return ("error", report.errors[0], None, None, result.warnings)
     return (
@@ -225,7 +246,9 @@ async def ai_chat(
     instruction = body.instruction.strip()  # 4
     if not instruction:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, EMPTY_INSTRUCTION)
-    if len(body.instruction) > settings.max_instruction_chars:
+    # The STRIPPED value on both checks: measuring emptiness after the strip and length
+    # before it rejects 1,995 real characters followed by a newline as "too long".
+    if len(instruction) > settings.max_instruction_chars:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, INSTRUCTION_TOO_LONG)
 
     history = body.history[-settings.max_history_turns * 2 :]  # 5. truncate, never reject
@@ -450,7 +473,11 @@ def ai_apply(
     created = proposal.created_at
     if created.tzinfo is None:  # a client that dropped the offset must not become a 500
         created = created.replace(tzinfo=UTC)
-    if (datetime.now(UTC) - created).total_seconds() > settings.proposal_ttl_seconds:
+    age = (datetime.now(UTC) - created).total_seconds()
+    # BOTH directions. A one-sided check makes `created_at: "2999-01-01"` a proposal that
+    # never expires, which is the one property the TTL exists to deny. The allowance is
+    # for a client clock that runs slightly fast, not for a client that invents a date.
+    if age > settings.proposal_ttl_seconds or age < -CLOCK_SKEW_SECONDS:
         raise HTTPException(status.HTTP_409_CONFLICT, EXPIRED_PROPOSAL)
     if content_hash(body.html) != proposal.base_sha256:  # 5
         raise HTTPException(status.HTTP_409_CONFLICT, STALE_PROPOSAL)

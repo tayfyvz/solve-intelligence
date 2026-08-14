@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 
 OpKind = Literal[
     "format_claim",
@@ -42,8 +42,13 @@ class Op(BaseModel):
     """
 
     kind: OpKind
-    claim_number: int | None = None
-    after_claim_number: int | None = None  # 0 = before claim 1
+    # StrictInt on both, and it is not pedantry: lax coercion accepts `true` as 1 and
+    # `"3"` as 3, so a malformed operation from a model or a tampered proposal from a
+    # client silently becomes a DELETE of a real claim. Strictness is not a constraint in
+    # the C3 sense — it emits no JSON-schema keyword — so the no-constraints rule for
+    # planner-facing models is untouched.
+    claim_number: StrictInt | None = None
+    after_claim_number: StrictInt | None = None  # 0 = before claim 1
     mark: Literal["bold", "italic", "strike"] | None = None
     enabled: bool | None = None
     text: str | None = None
