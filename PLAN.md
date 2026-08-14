@@ -3267,8 +3267,6 @@ budget `max_draft_attempts()` gives the judge. One number, one justification, tw
 
 **There is no in-graph clarify cycle at all.** `understand` runs exactly once per HTTP request.
 
-**There is no in-graph clarify cycle at all.** `understand` runs exactly once per HTTP request.
-
 **`gate_understanding` — the single most valuable function in this layer.**
 
 ```python
