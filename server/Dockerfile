@@ -27,9 +27,20 @@ RUN uv sync --frozen --no-dev
 # Make port 8000 available to the world outside this container
 EXPOSE 8000
 
+# THE PRODUCTION COMMAND. One image, two commands: the development one (--reload) is a
+# `command:` override in docker-compose.yml, next to the bind mount that makes it
+# necessary. It is not a branch in Python and not a second Dockerfile.
+#
 # --no-sync: `uv run` otherwise re-verifies the environment on every start, and with the
-#   source bind mount that re-verification tries to rebuild into the mounted directory.
-# --reload-dir app: the SQLite file lives in the bind-mounted data/, and the default
-#   watcher would restart the server on every database write.
-CMD ["uv", "run", "--no-sync", "uvicorn", "app.__main__:app", \
-     "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "app"]
+#   compose bind mount that re-verification tries to rebuild into the mounted directory.
+# app.main:app, NOT app.__main__:app: __main__.py exists only as a re-export shim for the
+#   inherited scaffold's documented command, and importing a module named __main__ as a
+#   library is a trap worth not shipping. The shim stays, so nobody's muscle memory breaks.
+# --workers 1, deliberately, and NOT the 4 a production image would normally want: four
+#   processes writing one SQLite file is contention, not concurrency. Raising this is
+#   step 7 of the Postgres move (PLAN §28.2.6) and is not safe before it.
+# --proxy-headers: the deployment in §28.2.2 puts nginx in front, so X-Forwarded-* is
+#   what carries the real scheme and client address.
+CMD ["uv", "run", "--no-sync", "uvicorn", "app.main:app", \
+     "--host", "0.0.0.0", "--port", "8000", \
+     "--workers", "1", "--proxy-headers", "--forwarded-allow-ips", "*"]

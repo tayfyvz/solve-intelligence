@@ -1,3 +1,6 @@
+# The DEVELOPMENT stack. Both services select their development shape here rather than in
+# their Dockerfile, so each image's own default is the production one and nothing has to
+# be remembered at deploy time. See PLAN §28.2.1 / §28.2.2.
 services:
   server:
     container_name: EngineeringChallenge_Server
@@ -8,7 +11,15 @@ services:
       - ./server:/usr/src/app
       # Anonymous volume: keeps the image's .venv from being masked by the bind
       # mount above (the host .venv is built for a different platform).
+      # NOTE: compose REUSES anonymous volumes on recreate — `docker compose down -v`
+      # if the dependencies change.
       - /usr/src/app/.venv
+    # --reload is development-only, and it lives here rather than in the Dockerfile so
+    # the image's own CMD is the production one. It exists because of the bind mount
+    # above: --reload-dir app keeps the watcher off the bind-mounted data/ SQLite file,
+    # which would otherwise restart the server on every database write.
+    command: ["uv", "run", "--no-sync", "uvicorn", "app.main:app",
+              "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "app"]
     environment:
       # Wins over the same key in .env — the container's database always belongs in the
       # bind-mounted data/ directory, whatever a developer's .env says for local runs.
@@ -18,7 +29,12 @@ services:
 
   client:
     container_name: EngineeringChallenge_Client
-    build: ./client
+    build:
+      context: ./client
+      # The Vite dev server, with HMR against the bind mount below. The Dockerfile's
+      # default target is `production` (static bundle behind nginx), so this line is the
+      # whole of the dev/prod difference on the client side.
+      target: dev
     ports:
       - "5173:5173"
     volumes:
