@@ -250,8 +250,13 @@ def insert_section(
     if doc.claims_heading is None:
         doc.claims_heading = Block("h1", "Claims")
 
+    # Both directions APPEND in request order, matching insert_claim's chaining rule:
+    # "add Description" then "add Details" must produce Description, Details — not the
+    # reverse. An earlier version prepended after_claims inserts (most-recent-first),
+    # which silently contradicted "add a section at the end of the document" the second
+    # time it was asked, with no way to fix the order short of deleting and starting over.
     if position == "after_claims":
-        doc.postamble[0:0] = blocks
+        doc.postamble.extend(blocks)
     else:
         doc.preamble.extend(blocks)
 

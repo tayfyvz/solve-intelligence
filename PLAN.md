@@ -2661,8 +2661,12 @@ since 4A was written; `OPS` had nothing. **P9 asserts `set(OPS) == set(get_args(
 **`insert_section(doc, heading, paragraphs, position, warnings)`**
 
 - `position == "before_claims"` → **append** the new blocks to `doc.preamble`.
-- `position == "after_claims"` → **prepend** them to `doc.postamble`. Both unambiguous now that
-  `claims_heading` is its own field.
+- `position == "after_claims"` → **append** them to `doc.postamble`. Both unambiguous now that
+  `claims_heading` is its own field. *(Originally prepended — most-recent-first. **Live
+  click-through correction, 2026-08-14:** that silently contradicted a user asking for a
+  section "at the end of the document" a second time — the newest insert jumped back above
+  the previous one, with no way to fix the order short of deleting and starting over. Append
+  matches `insert_claim`'s own chaining rule and is what "at the end" actually means.)*
 - Heading tag matches `doc.claims_heading.tag` if present, else `"h1"` — Background and Claims are
   peers, so a Background as `<h2>` under an `<h1>Claims</h1>` would read wrong.
 - **If `doc.claims_heading is None`, synthesise `Block("h1", "Claims")` first (C9).** Without this,

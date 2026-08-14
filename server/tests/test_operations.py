@@ -203,6 +203,21 @@ def test_insert_section_synthesises_a_claims_heading() -> None:
     assert reparsed.claims[0].blocks[0].html == "A device comprising a housing."
 
 
+def test_after_claims_inserts_stack_in_request_order() -> None:
+    """O8b. Two after_claims inserts must land in the order they were requested —
+    "add Description" then "add Details" leaves Description above Details — not
+    reversed. A user asking for a section "at the end of the document" a second time
+    must actually land at the new end, not jump back above the first one."""
+    doc = parse(TWO_CLAIMS_NO_HEADING)
+    warnings: list[str] = []
+    insert_section(doc, "Description", ["Description text."], "after_claims", warnings)
+    insert_section(doc, "Details", ["Details text."], "after_claims", warnings)
+    out = render(doc)
+
+    assert out.index("Description") < out.index("Details")
+    assert warnings == []
+
+
 BACKGROUND_DOC = (
     "<h1>Background</h1><p>Field of the invention.</p><p>More background text.</p>"
     "<h1>Claims</h1><p>1. A device.</p>"
