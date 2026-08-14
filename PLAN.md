@@ -9296,6 +9296,15 @@ runs with no API key. **Manual** = a scripted click-through, recorded in the sub
       currently sitting in the working tree, and add `*.tsbuildinfo` to `client/.gitignore`.
 - [ ] `uv run ruff format . && uv run ruff check .` clean; `npm run lint` clean.
 
+### 27.4 Corrections found while building Step 6
+
+Continuing the numbering of §22.13 / §23.11 / §24.3 / §25.7 / §26.12 (rows 1–32).
+
+| # | Step | The plan said | Reality | Resolution |
+|---|---|---|---|---|
+| 33 | 6A | §28.2.6 item 2 / §28.4(a): add a config test asserting `create_db_engine("postgresql+psycopg://u@h/d")` builds an engine with **no** `check_same_thread`, "buildable without a running Postgres — engine construction is lazy; only `.connect()` dials out". | **The prescribed test does not run.** Laziness is about *dialing out*, not about *importing the driver*: `create_engine` resolves the dialect and imports its DBAPI eagerly, so the call raises `ModuleNotFoundError: No module named 'psycopg'` before reaching any of our code. `psycopg` is not a dependency and adding a driver we never use — to the production image — to run one test is the wrong trade. | The **fix to `db.py` is unchanged** and shipped exactly as §28.2.6 specifies. The test captures the kwargs at the `create_engine` seam (`monkeypatch.setattr(db, "create_engine", spy)`) and asserts the postgres URL yields `{}` while `sqlite://` yields `connect_args` + `StaticPool`. That is the claim itself — *we pass no sqlite-only arguments for a non-sqlite URL* — asserted against the real `create_db_engine`. Verified red by hoisting `connect_args` back out of the guard. |
+| 34 | 6A | §28.2.5 names the logging rule but §28.4(a) lists no assertion for the **error middleware**, only `L7` for `llm.py`. | `main.py` shipped `logger.exception(...)`, which renders the traceback — whose final line is `str(exc)`. §28.2.5 explicitly forbids exactly that ("do not log `str(exc)` for anything that has been near the document") yet nothing tested it. | Middleware changed to `logger.error("http.unhandled type=%s method=%s path=%s", ...)`, plus `test_the_unhandled_error_log_line_carries_no_exception_message` asserting a secret in the exception message never reaches `caplog` while the **type** does. Verified red by restoring `logger.exception`. |
+
 ---
 
 ## 28. Production readiness
@@ -9599,12 +9608,12 @@ deliverable; a checklist that claims them would be worse than no checklist.
 
 **(a) Ship-blocking — fixed by this plan, before submission:**
 
-- [ ] **`db.py`**: move `connect_args={"check_same_thread": False}` inside a dialect guard keyed on
+- [x] **`db.py`** — DONE (6A). Moved `connect_args={"check_same_thread": False}` inside a dialect guard keyed on
       `make_url(url).get_backend_name() == "sqlite"` (§28.2.6 item 2), and scope `StaticPool` inside
       it. Add the config test asserting a `postgresql+psycopg://` URL builds an engine with no
       `check_same_thread`. **Without this the portability claim in `TECHNOLOGY.md:80` and
       `DESIGN.md:469` is false.**
-- [ ] **`main.py`**: `allow_credentials=False`; `allow_methods=["GET","POST","PUT","DELETE"]`;
+- [x] **`main.py`** — DONE (6A). `allow_credentials=False`; `allow_methods=["GET","POST","PUT","DELETE"]`;
       `allow_headers=["Content-Type"]` (§28.2.3). Error middleware stays registered first.
 - [ ] **Logging policy implemented** in `llm.py` / `graph.py` / `routers/ai.py`: the per-node `INFO`
       lines of §28.2.5 with counts, kinds and truncated hashes; **no document text, no instruction,

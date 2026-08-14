@@ -48,8 +48,17 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
     ) -> Response:
         try:
             return await call_next(request)
-        except Exception:
-            logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+        except Exception as exc:
+            # The TYPE and the path, never str(exc): a ValidationError's message quotes
+            # the input that failed, and on this server that input is a customer's
+            # unpublished patent text (PLAN §28.2.5). logger.exception would render the
+            # traceback, whose final line is that same message.
+            logger.error(
+                "http.unhandled type=%s method=%s path=%s",
+                type(exc).__name__,
+                request.method,
+                request.url.path,
+            )
             return JSONResponse(
                 status_code=500, content={"detail": "Something went wrong on the server."}
             )
@@ -59,9 +68,15 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
     application.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        # There is no auth, no cookie and no Authorization header anywhere in the
+        # client, so credentialed CORS buys nothing and only widens the surface — it
+        # is the flag that tells a browser to attach ambient credentials to a
+        # cross-origin request. Flip it back to True in the SAME commit that
+        # introduces authentication, never before.
+        allow_credentials=False,
+        # The four verbs and the one header the client actually issues.
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
+        allow_headers=["Content-Type"],
     )
     application.include_router(documents.router)
     application.include_router(ai.router)

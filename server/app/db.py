@@ -42,13 +42,21 @@ def create_db_engine(url: str) -> Engine:
     Exposed so tests can build a `:memory:` engine with identical wiring rather
     than duplicating it.
     """
-    kwargs: dict[str, object] = {"connect_args": {"check_same_thread": False}}
-    if _is_memory_url(url):
-        # A shared in-memory database has no file to share, so without StaticPool
-        # every pooled connection would see its own empty database.
-        kwargs["poolclass"] = StaticPool
-    else:
-        _ensure_sqlite_dir(url)
+    kwargs: dict[str, object] = {}
+    # check_same_thread is a sqlite3-ONLY connect argument; psycopg raises TypeError on
+    # it at first connect. Guarded like the pragma listener below, so that "the models
+    # port to Postgres by changing a URL" is actually true rather than nearly true.
+    # Keyed on the URL, not on engine.dialect.name, because the answer is needed before
+    # create_engine is called. StaticPool is scoped inside the guard for the same reason:
+    # it is a memory-SQLite concern and nothing else's.
+    if make_url(url).get_backend_name() == "sqlite":
+        kwargs["connect_args"] = {"check_same_thread": False}
+        if _is_memory_url(url):
+            # A shared in-memory database has no file to share, so without StaticPool
+            # every pooled connection would see its own empty database.
+            kwargs["poolclass"] = StaticPool
+        else:
+            _ensure_sqlite_dir(url)
 
     engine = create_engine(url, **kwargs)
 
