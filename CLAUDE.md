@@ -54,7 +54,14 @@ Violating any of these is a bug, not a style preference.
 6. **Renumber exactly once, at the end**, then remap cross-references.
 7. **The TipTap editor is uncontrolled.** No effect that compares an HTML string to `getHTML()`.
    Content changes happen by remounting via `key={docId}:{versionNumber}`.
-8. **Zustand store holds shared state only** — if only one component reads it, it stays local.
+8. **Zustand store holds shared state only — with one named exception.** If only one component reads
+   a value, it stays local. The exception is a value that must be written *atomically with* an
+   existing store field, where recording it anywhere else would record it at a different moment —
+   which is the bug, not the design. There is exactly one: **`versionSource: "user" | "ai" | null`**,
+   written in the same `set()` as `versionNumber` and read once, with `getState()`, by `ChatPanel`'s
+   version-change effect. It is not shared state; it is a property of a store transition, and the
+   store is the only thing that can observe the transition. **Adding to this list requires the same
+   justification — atomicity, not convenience — and the reason must be a comment on the field.**
 9. **`PUT /versions/{n}` updates in place and never creates a version.** This is challenge
    requirement 3; a test asserts the version count is unchanged.
 
@@ -64,7 +71,20 @@ Confirmed by running the real libraries — do not re-derive or assume otherwise
 
 - **`openai` 1.109.1.** `client.chat.completions.parse` exists on the **stable** path.
   `openai.resources.beta.chat` **does not exist** — `client.beta.chat.completions.parse` will
-  raise. Model is `gpt-5.2-2025-12-11` (a reasoning model: do not send `temperature`).
+  raise. Model is `gpt-5.2-2025-12-11`; `client.models.retrieve` resolves it (`owned_by=system`).
+- **`temperature` IS accepted on `gpt-5.2-2025-12-11`** — measured at 0.0, 1.0 and 2.0, all
+  accepted (4Z, 2026-08-13). An earlier version of this file said "a reasoning model: do not send
+  `temperature`"; **that was an assumption and it was wrong.** The shipped rule is a deliberate
+  split, not a prohibition: send `temperature=0` on the deterministic-output nodes (`understand`,
+  `plan_ops`, `judge`) and omit it on `draft`/`answer` (PLAN §21.2).
+- **Reasoning tokens are zero on this model.** `usage.completion_tokens_details.reasoning_tokens`
+  was **0 on all 14 measured calls**; completion tokens ranged 74–129. `max_completion_tokens`
+  ceilings are therefore bounded by the *visible* answer only — keep them generous because they
+  are free, not because a reasoning pass eats them.
+- **Measured latency for one `chat.completions.parse` call** (14 live calls, 2026-08-13, the real
+  schemas over the seed outline): **min 1.1 s, median 1.5 s, max 6.7 s** (the 6.7 s was an
+  `insert_section` request carrying prior-art text). The five-call worst case at the observed max
+  is ~33 s. `reasoning_effort="low"` is accepted.
 - **`@tiptap/core` 2.27.1.** `setContent(content, emitUpdate?, parseOptions?, options?)` is
   **positional**. Use `setContent(html, true)` so `onUpdate` fires. There is also an
   `errorOnInvalidContent` option worth enabling.
