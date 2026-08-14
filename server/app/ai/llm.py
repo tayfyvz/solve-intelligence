@@ -19,7 +19,14 @@ from openai import OpenAI
 from pydantic import BaseModel
 
 from app.ai import prompts
-from app.ai.schemas import Answer, EditPlan, JudgeVerdict, Retrieved, Understanding
+from app.ai.schemas import (
+    Answer,
+    EditPlan,
+    JudgeVerdict,
+    LlmUnavailable,
+    Retrieved,
+    Understanding,
+)
 from app.ai.understand import Turn
 from app.config import get_settings
 
@@ -38,9 +45,10 @@ ANSWER_TOKENS, ANSWER_TEMPERATURE = 2000, None
 
 _client: OpenAI | None = None
 
-
-class LlmUnavailable(RuntimeError):
-    """The model returned nothing usable. Carries a message a user could read."""
+# LlmUnavailable is RAISED here and DEFINED in schemas.py, beside PlanError. It moved
+# there for one mechanical reason: `nodes.node_guard` has to catch it, and `nodes.py` must
+# not import `openai` (invariant 1, test T5). `from app.ai.llm import LlmUnavailable`
+# still resolves, which is what every existing caller and test writes.
 
 
 def _get_client() -> OpenAI:

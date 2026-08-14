@@ -39,6 +39,15 @@ class Settings(BaseSettings):
     # PER LLM CALL. Passed as `timeout=` on every chat.completions.parse. 1.79x the
     # slowest of the 14 calls 4Z measured (max 6.7 s, median 1.5 s — PLAN §20.7).
     ai_node_timeout_seconds: float = 12.0
+    # "Extra draft attempts". graph.max_draft_attempts() is derived as this + 1, AT CALL
+    # TIME, so the two can never drift and so this value is a real runtime lever
+    # (PLAN §30.1). Do not add a third name for this number, and do not cache it in a
+    # module constant.
+    judge_max_retries: int = 1
+    # Wall-clock budget for the whole graph, checked at the TOP of every node. It is a
+    # HUNG-SOCKET BACKSTOP with no reachable path in the legitimate configuration — the
+    # full derivation, and why that is correct rather than a gap, is in PLAN §3.4.
+    ai_graph_deadline_seconds: float = 65.0
     # None => the kwarg is omitted entirely. 4Z measured reasoning_effort="low" as
     # ACCEPTED on gpt-5.2-2025-12-11, so "low" is the shipped value; it stays a setting
     # because an unsupported kwarg would be a 400 on every single call.

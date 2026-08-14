@@ -64,6 +64,16 @@ class PlanError(ValueError):
     """A structurally valid plan the engine cannot act on."""
 
 
+class LlmUnavailable(RuntimeError):
+    """The model returned nothing usable. Carries a message a user could read.
+
+    Raised by `llm.py` and caught by `nodes.node_guard` — and it lives HERE, with the rest
+    of the model↔engine contract, for a mechanical reason: `nodes.py` has to catch it and
+    `nodes.py` must not import `openai` (invariant 1, test T5). `llm.py` re-exports it, so
+    `from app.ai.llm import LlmUnavailable` still reads as it always did.
+    """
+
+
 REQUIRED: dict[str, tuple[str, ...]] = {
     "format_claim": ("claim_number", "mark", "enabled"),
     "delete_claim": ("claim_number",),

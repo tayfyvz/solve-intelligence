@@ -246,7 +246,7 @@ CAPABILITY_STATEMENT = (
     '"make claim 2 bold".'
 )
 
-_WHICH_CLAIM = "I'm not sure which claim you mean. Which claim number should I change?"
+WHICH_CLAIM = "I'm not sure which claim you mean. Which claim number should I change?"
 _NO_CLAIMS_AT_ALL = (
     "This document doesn't have any numbered claims yet, so there's no claim for me to "
     "change. I can add one, or write a section — what would you like?"
@@ -336,7 +336,7 @@ def gate_understanding(
     #    fails on. The reverse — confidence="high", resolved=False — is left alone: an
     #    honest question is always allowed.
     if u.confidence == "low":
-        u = u.model_copy(update={"resolved": False, "question": u.question or _WHICH_CLAIM})
+        u = u.model_copy(update={"resolved": False, "question": u.question or WHICH_CLAIM})
 
     # 2. Every resolved claim number must exist in THIS parse. This runs before the
     #    branch, so a nonexistent claim number CANNOT REACH plan_ops or draft — not "is
@@ -354,7 +354,7 @@ def gate_understanding(
 
     # 3. A claim-targeted edit with no target is not actionable.
     if u.intent in ("edit_ops", "generate") and u.target_kind == "claims" and not u.claim_numbers:
-        u = u.model_copy(update={"resolved": False, "question": u.question or _WHICH_CLAIM})
+        u = u.model_copy(update={"resolved": False, "question": u.question or WHICH_CLAIM})
 
     # 4. A claim request against a document with no claims.
     if u.target_kind == "claims" and not doc.claims:

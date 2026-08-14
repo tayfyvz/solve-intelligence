@@ -4,8 +4,29 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 
+from app.config import get_settings
 from app.db import Base, create_db_engine
 from app.main import create_app
+
+
+@pytest.fixture
+def ai_settings(monkeypatch: pytest.MonkeyPatch):
+    """Vary AI settings for one test, then put the cache back.
+
+    `get_settings` is `lru_cache`d, so setting an environment variable does nothing until
+    the cache is cleared — and leaving a varied value cached would leak into every test
+    that ran afterwards. Both clears matter; the teardown one more than the setup one.
+    """
+    get_settings.cache_clear()
+
+    def _apply(**values: object):
+        for name, value in values.items():
+            monkeypatch.setenv(name.upper(), str(value))
+        get_settings.cache_clear()
+        return get_settings()
+
+    yield _apply
+    get_settings.cache_clear()
 
 
 @pytest.fixture
