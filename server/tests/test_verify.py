@@ -12,6 +12,7 @@ not reused and not renumbered.
 import pytest
 
 from app.ai.document import parse
+from app.ai.schemas import Answer, Citation
 from app.ai.verify import (
     E_COUNT_MISMATCH,
     E_EMPTIED,
@@ -297,6 +298,42 @@ def test_check_citations_flags_a_quote_that_is_not_in_the_document() -> None:
     assert check_citations(doc, [("claim", "2", "the housing is made of titanium")]) != []
     # prior_art quotes are never checked here: the uploaded text is not in the document.
     assert check_citations(doc, [("prior_art", "US 1", "anything at all")]) == []
+
+
+def test_check_citations_and_verified_refs() -> None:
+    """VF14 — a 4A gate row living here, because its fixtures are 4A types.
+
+    The unpack is the one `_verify` does, and the second half is what pins the retype
+    (PLAN §19.5): the same call made with plain triples — no Pydantic anywhere — must
+    return the identical result. That is the assertion that verify.py never needs
+    schemas.py, and therefore that this module could ship at 3D.
+    """
+    doc = parse(SEED_1)
+    real = "the biocompatible materials are glass"
+    answer = Answer(
+        text="Claim 2 narrows the housing material.",
+        citations=[
+            Citation(kind="claim", ref="2", quote=real),
+            Citation(kind="claim", ref="3", quote="a quotation nobody wrote"),
+            Citation(kind="prior_art", ref="uploaded file", quote="also not in the document"),
+        ],
+    )
+    triples = [(c.kind, c.ref, c.quote) for c in answer.citations]
+
+    warnings = check_citations(doc, triples)
+    assert len(warnings) == 1
+    assert "a quotation nobody wrote" in warnings[0]
+    assert "claim 3" in warnings[0]
+    assert verified_claim_refs(doc, triples) == [2]
+
+    # The retype: no Pydantic in sight, identical result.
+    plain = [
+        ("claim", "2", real),
+        ("claim", "3", "a quotation nobody wrote"),
+        ("prior_art", "uploaded file", "also not in the document"),
+    ]
+    assert check_citations(doc, plain) == warnings
+    assert verified_claim_refs(doc, plain) == [2]
 
 
 def test_verified_claim_refs_are_server_computed_and_never_model_supplied() -> None:

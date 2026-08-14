@@ -3151,7 +3151,12 @@ def resolve_outcome(u: Understanding, *, clarify_count: int) -> Understanding:
     instruction ask its questions again from a clean budget.
     """
     if u.resolved or clarify_allowed(clarify_count):
-        return u
+        # Overwrite on BOTH paths — corrected at 4A. A bare `return u` here contradicts
+        # the strict-mode note below ("the model's value is overwritten on every path")
+        # and fails U20: the model emits `clarify_exhausted` whether or not the prompt
+        # names it, and a model that guessed True would terminate a turn Python never
+        # terminated.
+        return u.model_copy(update={"clarify_exhausted": False})
     return u.model_copy(update={
         "question": CAPABILITY_STATEMENT,
         "options": [],                 # nothing to click; the statement IS the guidance
@@ -3196,7 +3201,16 @@ increments the counter and the server floor below re-derives that count from the
 **The server-side floor — the clamp, corrected.**
 
 ```python
-def clarify_floor(history: list[ChatTurn]) -> int:
+def clarify_floor(history: list[Turn]) -> int:      # `Turn` is a two-attribute Protocol
+                                                    # declared in this module — corrected
+                                                    # at 4A. `ChatTurn` lives in
+                                                    # app/schemas.py, the WIRE layer,
+                                                    # which 4D ships; importing it here
+                                                    # would invert the dependency and
+                                                    # falsify this section's own opening
+                                                    # sentence ("it needs only
+                                                    # document.py and schemas.py"). Same
+                                                    # argument as §19.5's triples.
     """The number of consecutive clarifying questions the TRANSCRIPT shows we just asked.
 
     `clarify_count` arrives from the client and is not evidence of anything. The history
