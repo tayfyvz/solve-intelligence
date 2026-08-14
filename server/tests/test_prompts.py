@@ -126,11 +126,14 @@ def test_instruction_is_the_last_message(builder) -> None:
 
 
 @pytest.mark.parametrize("builder", BUILDERS, ids=["understand", "plan", "draft", "answer"])
-def test_the_selection_is_rendered_in_exactly_one_place(builder) -> None:
-    """L4 — two renderings of the same fact under two headers is exactly the kind of
-    duplicate that drifts. `understand` is the only node that receives a selection at
-    all; the others take no selection parameter."""
-    assert not any("SELECTED TEXT" in m["content"] for m in builder())
+def test_the_selection_block_is_never_duplicated(builder) -> None:
+    """L4 — two renderings of the SELECTION block under two headers is exactly the kind
+    of duplicate that drifts. `understand` and `plan` each take a selection parameter
+    (understand to resolve the target, plan to copy it verbatim into `replace_text`); the
+    others take none. None of the BUILDERS above pass a selection, so the block itself
+    must not appear at all here — this only guards against it appearing twice."""
+    hits = sum(m["content"].count("SELECTION (the user has") for m in builder())
+    assert hits == 0
 
 
 def test_the_selection_appears_only_in_the_understand_system_message() -> None:
@@ -147,6 +150,24 @@ def test_the_selection_appears_only_in_the_understand_system_message() -> None:
     )
     assert "SELECTION (the user has this text highlighted" in messages[0]["content"]
     assert not any("SELECTION (the user has" in m["content"] for m in messages[1:])
+
+
+def test_plan_sees_the_selection_verbatim_and_uncapped() -> None:
+    """Regression: "remove the selected part" was refused because `plan_ops` was never
+    shown the selection's text, only `understand` was — so the planner had no string it
+    could use as `replace_text.find`. `plan` must now see the FULL selection text
+    (unlike `understand`'s 400-char cap), long selections included."""
+    long_text = "the biocompatible material with a thickness of five millimetres " * 10
+    messages = build_plan_messages(
+        "remove the selected part", "outline", "", "", [], Selection(text=long_text)
+    )
+    assert long_text in messages[0]["content"]
+
+
+def test_plan_without_a_selection_carries_no_selection_block() -> None:
+    """The default stays None, so a plan_ops call with no selection renders no block."""
+    messages = build_plan_messages("delete claim 3", "outline", "", "", [])
+    assert "SELECTION (the user has" not in messages[0]["content"]
 
 
 @pytest.mark.parametrize(

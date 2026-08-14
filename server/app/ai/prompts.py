@@ -262,11 +262,21 @@ RULES
     user's wording doesn't match any heading in the outline, that is a rule-4(c) refusal
     ("no such section"), not a guess at which one they mean. `delete_section` can never
     touch the claims — the claims region is not a section this op can reach.
+12. REMOVING OR REPLACING THE SELECTED TEXT. If a SELECTION block appears below and the
+    instruction refers to it ("the selected part", "what I highlighted", "this", "that",
+    with nothing else to bind the word to), use `replace_text` with `find` set to the
+    selection's text EXACTLY as shown between its quotes — copy it character for
+    character, do not paraphrase, summarise, or retype it from memory — and `replace` set
+    to "" to remove it, or to the user's replacement wording otherwise. If the instruction
+    says "the selected part" and no SELECTION block appears below, that is a rule-4(b)
+    refusal: there is nothing selected to act on.
 
 DOCUMENT OUTLINE (reference only — do not copy it back)
 {outline}
 
 {claims}
+
+{selection_block}
 
 {prior_art}"""
 
@@ -503,6 +513,25 @@ def _selection_block(selection: Selection | None) -> str:
     )
 
 
+def _selection_block_verbatim(selection: Selection | None) -> str:
+    """Unlike `_selection_block`, this is not shown to a node that merely resolves a
+    target — it is shown to `plan_ops`, which must be able to copy the text into a
+    `replace_text.find` and have it match the document exactly. Truncating it the way
+    `_selection_block` does for `understand` would make the copy unusable: a `find` that
+    stops mid-selection can never match. The route already caps the wire selection at
+    `max_selection_chars` (8,000), so no further cap is applied here.
+    """
+    if selection is None or not selection.text.strip():
+        return ""
+    numbers = ", ".join(str(n) for n in selection.claim_numbers) or "none"
+    return (
+        "SELECTION (the user has this text highlighted in the editor, shown in full so "
+        "you can copy it verbatim)\n"
+        f'"{selection.text}"\n'
+        f"It covers claim(s): {numbers}. Whole claims: {selection.whole_claims}."
+    )
+
+
 def _prior_art_note(present: bool, name: str | None) -> str:
     if not present:
         return ""
@@ -565,11 +594,26 @@ def build_understand_messages(
 
 
 def build_plan_messages(
-    instruction: str, outline: str, claims: str, prior_art: str, history: list[Turn]
+    instruction: str,
+    outline: str,
+    claims: str,
+    prior_art: str,
+    history: list[Turn],
+    selection: Selection | None = None,
 ) -> list[dict[str, str]]:
     """plan_ops owns replace_text and can still emit replace_claim. Any operation
-    carrying a `text` field is authorship, and authorship needs the original."""
-    system = PLAN_SYSTEM.format(outline=outline, claims=claims, prior_art=prior_art)
+    carrying a `text` field is authorship, and authorship needs the original.
+
+    `selection` is shown in full (see `_selection_block_verbatim`) so a "remove the
+    selected part" instruction can be expressed as a literal `replace_text.find` rather
+    than refused for want of the exact text.
+    """
+    system = PLAN_SYSTEM.format(
+        outline=outline,
+        claims=claims,
+        prior_art=prior_art,
+        selection_block=_selection_block_verbatim(selection),
+    )
     return _messages(system, history, instruction)
 
 

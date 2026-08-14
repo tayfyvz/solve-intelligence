@@ -185,10 +185,17 @@ def understand_llm(
 
 
 def plan_llm(
-    instruction: str, outline: str, claims: str, prior_art: str, history: list[Turn]
+    instruction: str,
+    outline: str,
+    claims: str,
+    prior_art: str,
+    history: list[Turn],
+    selection: prompts.Selection | None = None,
 ) -> EditPlan:
     return _parse(
-        messages=prompts.build_plan_messages(instruction, outline, claims, prior_art, history),
+        messages=prompts.build_plan_messages(
+            instruction, outline, claims, prior_art, history, selection
+        ),
         response_format=EditPlan,
         node="plan",
         max_output_tokens=PLAN_TOKENS,
