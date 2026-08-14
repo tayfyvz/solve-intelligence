@@ -237,11 +237,20 @@ Tests must justify their existence — target ~20 meaningful ones, not a coverag
 
 ## Scope discipline
 
-Do not build: Option B (collaboration, presence, CRDT), auth, autosave, version **diff or
-delete**, streaming, agent loops, persisted chat, or CI. *(This list used to ban version
+Do not build: Option B (collaboration, presence, CRDT), auth, autosave, version **diff**,
+streaming, agent loops, persisted chat, or CI. *(This list used to ban version
 "rename/diff/delete". **Version rename shipped in Task 1** and is in the UI — a scope rule that
-forbids something already built teaches the reader to distrust the whole list.)* "Not overly complex" is an explicit requirement
-of the brief. Ideas beyond scope belong in the `DESIGN.md` future-work section, not in the code.
+forbids something already built teaches the reader to distrust the whole list. **Version delete
+is authorized as of 2026-08-14**, on the repo owner's explicit direction: a version list a user
+cannot prune is a real gap, not scope creep, and the deletion itself is a small, ordinary CRUD
+operation — one `DELETE /documents/{id}/versions/{n}` endpoint, one confirm-then-remove UI
+action — not the kind of complexity this rule exists to keep out. Diff still stays cut: a diff
+view is a genuinely bigger feature (a rendering and computation problem, not CRUD) and nothing
+has asked for it. The one invariant a delete must preserve: **a document can never be left with
+zero versions** — deleting the last remaining version of a document must be refused (409), the
+same shape as the currently-open-version guard `PUT /versions/{n}` already needs.)* "Not overly
+complex" is an explicit requirement of the brief. Ideas beyond scope belong in the `DESIGN.md`
+future-work section, not in the code.
 
 **RAG came off that list**, on the repo owner's explicit authorisation, when long patents
 arrived: a 37-page patent does not fit in any context budget, so *something* has to decide what

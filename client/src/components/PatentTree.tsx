@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import DeleteVersionDialog from "./DeleteVersionDialog";
 import Pager from "./Pager";
 import Timestamp from "./Timestamp";
 import TreeRow from "./TreeRow";
@@ -7,6 +8,9 @@ import type { DocumentSummary, VersionSummary } from "../types";
 
 /** Only one name can be under the cursor at a time, so one slot covers both levels. */
 type Editing = { kind: "patent"; id: number } | { kind: "version"; n: number } | null;
+
+/** The version behind the confirmation dialog, if one is open. */
+type Deleting = { n: number; name: string } | null;
 
 export interface PatentTreeProps {
   documents: DocumentSummary[];
@@ -34,6 +38,9 @@ export interface PatentTreeProps {
   onImport(): void;
   onRenameDocument(id: number, title: string): Promise<string | null>;
   onRenameVersion(n: number, name: string): Promise<string | null>;
+  /** Refused (409) if `n` is the document's only version — see `versionsTotal`
+   *  gating below, which keeps the UI from ever reaching that click. */
+  onDeleteVersion(n: number): Promise<string | null>;
   onPageDocuments(offset: number): void;
   /** Appends the next page of versions to the ones already shown. */
   onShowMoreVersions(): void;
@@ -76,10 +83,13 @@ export default function PatentTree({
   onImport,
   onRenameDocument,
   onRenameVersion,
+  onDeleteVersion,
   onPageDocuments,
   onShowMoreVersions,
 }: PatentTreeProps) {
   const [editing, setEditing] = useState<Editing>(null);
+  const [deleting, setDeleting] = useState<Deleting>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const more = versions.length < versionsTotal;
 
   return (
@@ -136,6 +146,19 @@ export default function PatentTree({
                         {document.version_count === 1 ? "version" : "versions"} ·{" "}
                         <Timestamp stamp={document.updated_at} />
                       </>
+                    }
+                    // Same pill, same colour, as the version-level "Open" badge
+                    // below: one visual language for "this is the open thing",
+                    // so a reader never has to guess whether the patent or only
+                    // one of its versions is what's on screen. Nesting supplies
+                    // the rest — the version badge sits inside the expanded,
+                    // "Open"-tagged patent, so the two read as one fact, not two.
+                    badge={
+                      open ? (
+                        <span className="shrink-0 rounded-full bg-sky-50 px-1.5 text-[0.625rem] font-semibold uppercase tracking-wide leading-4 text-sky-700 ring-1 ring-sky-100">
+                          Open
+                        </span>
+                      ) : undefined
                     }
                     selected={open}
                     expanded={open}
@@ -203,6 +226,25 @@ export default function PatentTree({
                                   if (!message) setEditing(null);
                                   return message;
                                 }}
+                                // Omitted entirely when this is the document's
+                                // only version: deleting it would always 409,
+                                // so there is no click to offer.
+                                deleteLabel={
+                                  versionsTotal > 1
+                                    ? `Delete version ${version.version_number}`
+                                    : undefined
+                                }
+                                onDelete={
+                                  versionsTotal > 1
+                                    ? () => {
+                                        setDeleteError(null);
+                                        setDeleting({
+                                          n: version.version_number,
+                                          name: version.name,
+                                        });
+                                      }
+                                    : undefined
+                                }
                               />
                             </li>
                           ))}
@@ -250,6 +292,21 @@ export default function PatentTree({
         busy={listBusy}
         onPage={onPageDocuments}
       />
+
+      {deleting && (
+        <DeleteVersionDialog
+          versionNumber={deleting.n}
+          versionName={deleting.name}
+          busy={selectDisabled}
+          error={deleteError}
+          onCancel={() => setDeleting(null)}
+          onConfirm={async () => {
+            const message = await onDeleteVersion(deleting.n);
+            if (message) setDeleteError(message);
+            else setDeleting(null);
+          }}
+        />
+      )}
     </section>
   );
 }

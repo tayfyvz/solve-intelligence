@@ -46,6 +46,7 @@ function treeProps(overrides: Partial<PatentTreeProps> = {}): PatentTreeProps {
     onImport: vi.fn(),
     onRenameDocument: vi.fn(async () => null),
     onRenameVersion: vi.fn(async () => null),
+    onDeleteVersion: vi.fn(async () => null),
     onPageDocuments: vi.fn(),
     onShowMoreVersions: vi.fn(),
     ...overrides,
@@ -217,6 +218,60 @@ describe("PatentTree", () => {
     await user.tab();
 
     expect(within(form as HTMLFormElement).getByRole("textbox")).toBeTruthy();
+  });
+
+  // The delete "x" must never be reachable when clicking it is guaranteed to
+  // 409: a document's only version cannot be deleted server-side, so the
+  // button is not offered rather than offered-then-disabled.
+  it("hides the delete button on a document's only version, and shows it otherwise", () => {
+    const { rerender } = render(
+      <PatentTree {...treeProps({ versions: [summary(1)], versionsTotal: 1 })} />,
+    );
+    expect(screen.queryByRole("button", { name: /^Delete version/ })).toBeNull();
+
+    rerender(<PatentTree {...treeProps()} />); // two versions, from the default props
+    expect(screen.getByRole("button", { name: "Delete version 1" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Delete version 2" })).toBeTruthy();
+  });
+
+  // The full destructive flow: click the x, see the confirmation naming the
+  // version, cancel changes nothing, confirm calls through and closes.
+  it("confirms before deleting, and cancelling calls nothing", async () => {
+    const user = userEvent.setup();
+    const props = treeProps();
+    render(<PatentTree {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Delete version 1" }));
+    expect(screen.getByRole("heading", { name: "Delete version 1?" })).toBeTruthy();
+    expect(props.onDeleteVersion).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("heading", { name: "Delete version 1?" })).toBeNull();
+    expect(props.onDeleteVersion).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Delete version 1" }));
+    await user.click(screen.getByRole("button", { name: "Delete version" }));
+    expect(props.onDeleteVersion).toHaveBeenCalledWith(1);
+    await waitFor(() =>
+      expect(screen.queryByRole("heading", { name: "Delete version 1?" })).toBeNull(),
+    );
+  });
+
+  // A 409 (or any other failure) keeps the dialog open with the server's own
+  // sentence, the same shape as a rejected rename.
+  it("keeps the dialog open with the server's sentence on a failed delete", async () => {
+    const user = userEvent.setup();
+    const onDeleteVersion = vi.fn(async () => "Cannot delete the only version of a patent.");
+    render(<PatentTree {...treeProps({ onDeleteVersion })} />);
+
+    await user.click(screen.getByRole("button", { name: "Delete version 1" }));
+    await user.click(screen.getByRole("button", { name: "Delete version" }));
+
+    expect(onDeleteVersion).toHaveBeenCalledWith(1);
+    expect(
+      (await screen.findByRole("alert")).textContent,
+    ).toBe("Cannot delete the only version of a patent.");
+    expect(screen.getByRole("heading", { name: "Delete version 1?" })).toBeTruthy();
   });
 
   // Every row that changes what is in the editor is gated on the same flag, the

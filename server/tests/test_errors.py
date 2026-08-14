@@ -60,11 +60,13 @@ def test_cors_is_uncredentialed_and_narrow(client: TestClient) -> None:
 
 
 def test_the_allowed_methods_are_exactly_the_methods_the_routes_serve(client: TestClient) -> None:
-    """The hand-written list drifted from the routes in both directions: it allowed
-    DELETE, which no route serves, and omitted the PATCH that both rename features
-    use — so every rename failed preflight in the browser and the UI reported
-    "cannot reach the server". Derived from the route table so it cannot drift
-    again; OPTIONS is the preflight itself and HEAD is served for every GET."""
+    """The hand-written list used to drift from the routes in both directions: it
+    allowed DELETE before any route served it, and omitted the PATCH that both
+    rename features use — so every rename failed preflight in the browser and the
+    UI reported "cannot reach the server". Derived from the route table so it
+    cannot drift again; OPTIONS is the preflight itself and HEAD is served for
+    every GET. DELETE joined `served` the day version delete shipped — this
+    assertion follows the route table rather than re-hardcoding a method list."""
     served = {
         method
         for route in client.app.routes
@@ -76,7 +78,7 @@ def test_the_allowed_methods_are_exactly_the_methods_the_routes_serve(client: Te
     allowed = {m.strip() for m in response.headers["access-control-allow-methods"].split(",")}
     assert allowed == served | {"OPTIONS", "HEAD"}
     assert "PATCH" in allowed
-    assert "DELETE" not in allowed  # there is no delete route to preflight for
+    assert "DELETE" in allowed  # the version-delete route now serves it
 
 
 @pytest.mark.parametrize(

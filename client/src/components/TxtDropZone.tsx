@@ -85,26 +85,32 @@ export default function TxtDropZone({
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
       onDrop={onDrop}
-      className={`flex items-center justify-between gap-2 rounded-lg border border-dashed px-3 py-2 text-[0.8125rem] ${
-        over ? "border-sky-400 bg-sky-50" : "border-slate-300 bg-white"
+      className={`flex items-center gap-2 rounded-lg border border-dashed px-3 py-1.5 text-[0.8125rem] transition-colors ${
+        over ? "border-sky-400 bg-sky-50" : "border-slate-300 bg-slate-50"
       }`}
     >
       {file ? (
-        <span className="flex min-w-0 items-center gap-2">
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-slate-700">
+          <FileIcon className="h-4 w-4 shrink-0 text-slate-500" />
           <span className="truncate">
-            📄 {file.name} · {formatBytes(file.bytes)}
+            <span className="font-medium">{file.name}</span>{" "}
+            <span className="text-slate-500">· {formatBytes(file.bytes)}</span>
           </span>
           <button
             type="button"
             aria-label={`Remove ${file.name}`}
             onClick={onClear}
-            className="shrink-0 rounded px-1 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+            className="focus-ring ml-auto shrink-0 rounded-md p-1 text-slate-500 hover:bg-slate-200/60 hover:text-slate-900"
           >
-            ✕
+            <CloseIcon className="h-3 w-3" />
           </button>
         </span>
       ) : (
-        <span className="truncate text-slate-500">Drop a .txt for the AI to read</span>
+        // Empty: no label next to the button. The button already says "Attach
+        // .txt"; a copy of that same fact in prose next to it was noise, not
+        // information — this flex-1 spacer is what keeps the button pinned to
+        // the right edge of the zone rather than collapsing to its own width.
+        <span className="min-w-0 flex-1" />
       )}
 
       {/* Drag-and-drop is unusable by keyboard, so the hidden input is the real
@@ -128,10 +134,29 @@ export default function TxtDropZone({
         type="button"
         disabled={disabled}
         onClick={() => input.current?.click()}
-        className="shrink-0 rounded border border-slate-300 px-2 py-1 font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+        className="btn btn-secondary focus-ring shrink-0 px-2.5 text-[0.75rem]"
       >
         Attach .txt
       </button>
     </div>
+  );
+}
+
+/** Minimal document-with-folded-corner glyph, matching the house icon style (see the
+ * pencil in TreeRow.tsx): 20x20 viewBox, currentColor, one path, aria-hidden because
+ * the surrounding text or button already names the control. */
+function FileIcon({ className }: { className: string }) {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className={className}>
+      <path d="M6 2a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7.828a2 2 0 0 0-.586-1.414l-3.828-3.828A2 2 0 0 0 10.172 2H6Zm4 1.5V6a1 1 0 0 0 1 1h2.5L10 3.5Z" />
+    </svg>
+  );
+}
+
+function CloseIcon({ className }: { className: string }) {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className={className}>
+      <path d="M4.3 4.3a1 1 0 0 1 1.4 0L10 8.6l4.3-4.3a1 1 0 1 1 1.4 1.4L11.4 10l4.3 4.3a1 1 0 0 1-1.4 1.4L10 11.4l-4.3 4.3a1 1 0 0 1-1.4-1.4L8.6 10 4.3 5.7a1 1 0 0 1 0-1.4Z" />
+    </svg>
   );
 }

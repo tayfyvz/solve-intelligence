@@ -229,3 +229,52 @@ def test_saved_html_is_sanitised(client: TestClient) -> None:
 
     assert put.json()["content"] == "<p>keep</p>"
     assert post.json()["content"] == "<p>keep</p>"
+
+
+def test_delete_removes_a_version_and_leaves_others_untouched(client: TestClient) -> None:
+    """V10 — deleting one version does not renumber or touch the rest."""
+    client.post(VERSIONS, json={"content": "<p>v2</p>"})
+    client.post(VERSIONS, json={"content": "<p>v3</p>"})
+    v1_before = client.get(f"{VERSIONS}/1").json()["content"]
+    v3_before = client.get(f"{VERSIONS}/3").json()["content"]
+
+    response = client.delete(f"{VERSIONS}/2")
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert client.get(f"{VERSIONS}/2").status_code == 404
+    # Untouched: neither content nor number moved for the survivors.
+    assert client.get(f"{VERSIONS}/1").json()["content"] == v1_before
+    assert client.get(f"{VERSIONS}/3").json()["content"] == v3_before
+    assert version_count(client) == 2
+
+
+def test_delete_404s_on_a_missing_version_or_document(client: TestClient) -> None:
+    """V11 — same distinct-404 rule as every other version route."""
+    assert client.delete(f"{VERSIONS}/99").status_code == 404
+    assert client.delete(f"{VERSIONS}/99").json()["detail"] == "Version 99 of document 1 not found."
+    assert client.delete("/api/documents/999/versions/1").status_code == 404
+    assert (
+        client.delete("/api/documents/999/versions/1").json()["detail"] == "Document 999 not found."
+    )
+
+
+def test_delete_refuses_the_last_remaining_version(client: TestClient) -> None:
+    """V12 — a document can never be left with zero versions."""
+    response = client.delete(f"{VERSIONS}/1")
+
+    assert response.status_code == 409
+    assert client.get(f"{VERSIONS}/1").status_code == 200
+    assert version_count(client) == 1
+
+
+def test_delete_on_one_document_cannot_touch_another(client: TestClient) -> None:
+    """V13 — the version lookup filters on document_id as well as the number,
+    same as the PUT path (V1c)."""
+    client.post(VERSIONS, json={"content": "<p>v2</p>"})
+    other = client.get("/api/documents/2/versions/1").json()["content"]
+
+    assert client.delete(f"{VERSIONS}/2").status_code == 204
+
+    assert client.get("/api/documents/2/versions/1").json()["content"] == other
+    assert client.get("/api/documents/2").json()["version_count"] == 1

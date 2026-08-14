@@ -58,6 +58,72 @@ def _headings(blocks: list[Block]) -> list[str]:
     return [block_text(b) for b in blocks if b.tag in HEADING_TAGS]
 
 
+_PSEUDO_HEADING_MAX_WORDS = 8
+# Any of . ! ? : ; ends a clause far more often than it ends a hand-typed heading, so a
+# block carrying one of these is read as a sentence, not a section name.
+_PSEUDO_HEADING_END_RE = re.compile(r"[.!?:;]\s*$")
+
+
+def _reads_as_heading(block: Block) -> bool:
+    """A plain paragraph shaped like a hand-typed section header rather than prose.
+
+    This exists because a user who types a new section by hand rarely reaches for the
+    editor's H1/H2/H3 toolbar buttons (`client/src/components/Toolbar.tsx`) — they select
+    a short line and press Cmd+B to make it stand out, which parses as an ordinary `<p>`
+    with a whole-block bold mark, not a heading tag. `document.py`'s claims-region
+    absorption (parse(), ~line 439) then folds that paragraph and whatever follows it into
+    the PRECEDING claim as continuation blocks, because from pure structure a short bold
+    line is indistinguishable from a claim's own continuation prose — document.py's own
+    comment on `_is_claims_heading` makes the same admission about a different ambiguity.
+    Reparsing to split on this heuristic was rejected: it would let a genuine bold,
+    short continuation paragraph silently end a real claim's region and misfile whatever
+    came after it, trading a labeling gap for a claim-identity bug (CLAUDE.md invariants
+    4-6). This function is read-only and changes no structure; see `_embedded_headings`.
+
+    Bounded like `_is_claims_heading` (document.py), and for the same reason — no single
+    signal is safe alone in ordinary patent prose, so all three must agree:
+      - the block's ONLY mark is a whole-block bold (`marks == ("strong",)`);
+      - <= 8 words — a heading names a topic, a sentence states a fact, and this domain's
+        sentences run longer far more often than not;
+      - no sentence-ending punctuation — "The widget is round." is emphasised prose,
+        "Details" and "Test Results" are not sentences.
+    A false positive costs one extra, honest line in `build_outline`, never a structural
+    change — so erring toward catching more is the safe direction here, unlike in
+    `_is_claims_heading` where a false positive would misroute real claims.
+    """
+    if block.tag != "p" or block.marks != ("strong",):
+        return False
+    text = block_text(block)
+    if not text or _PSEUDO_HEADING_END_RE.search(text):
+        return False
+    return len(text.split()) <= _PSEUDO_HEADING_MAX_WORDS
+
+
+def _embedded_headings(blocks: list[Block]) -> list[str]:
+    """Hand-typed pseudo-headings hiding in a run of body blocks, in order.
+
+    Presentation only. It does not move a block, does not touch `document.py`'s parse or
+    claim-absorption logic, and cannot change which claim a paragraph belongs to or how
+    renumbering / round-trip identity behave — it only changes what `build_outline` SAYS
+    about blocks that are already there. It exists because `build_outline` is the ONLY
+    thing `understand` reads (UNDERSTAND_SYSTEM: "the OUTLINE does not list it" is the
+    literal test for "this document does not contain that"), and a section a user typed
+    by hand — no heading tag — is invisible to `_headings()` even though `build_context`
+    already retrieves its text correctly (confirmed live: a claim's continuation blocks
+    and a preamble section's body blocks are both rendered in full in `build_context`'s
+    output). The bug was never that the content was unreachable; it was that `understand`
+    was never told it existed, so it dead-ended before `build_context` ever ran.
+    """
+    return [block_text(b) for b in blocks if _reads_as_heading(b)]
+
+
+def _annotate_pseudo_headings(line: str, embedded: list[str], limit: int) -> str:
+    if not embedded:
+        return line
+    shown = ", ".join(f'"{_truncate(h, limit)}"' for h in embedded)
+    return f"{line} (also, text with no heading tag that reads as its own heading: {shown})"
+
+
 def _outline(doc: ParsedDocument, limit: int, *, drop_middle: bool) -> str:
     before = _headings(doc.preamble)
     if doc.claims_heading is not None:
@@ -69,6 +135,7 @@ def _outline(doc: ParsedDocument, limit: int, *, drop_middle: bool) -> str:
         line = f"  {claim.number}{claim.separator} " + _truncate(block_text(claim.blocks[0]), limit)
         if len(claim.blocks) > 1:
             line += f" [+{len(claim.blocks) - 1} more paragraphs]"
+            line = _annotate_pseudo_headings(line, _embedded_headings(claim.blocks[1:]), limit)
         claim_lines.append(line)
 
     if drop_middle and len(claim_lines) > 2 * _OUTLINE_KEEP:
@@ -80,13 +147,24 @@ def _outline(doc: ParsedDocument, limit: int, *, drop_middle: bool) -> str:
             *claim_lines[-_OUTLINE_KEEP:],
         ]
 
+    before_line = _annotate_pseudo_headings(
+        "Sections before the claims: " + (", ".join(before) if before else "(none)"),
+        _embedded_headings(doc.preamble),
+        limit,
+    )
+    after_line = _annotate_pseudo_headings(
+        "Sections after the claims: " + (", ".join(after) if after else "(none)"),
+        _embedded_headings(doc.postamble),
+        limit,
+    )
+
     return "\n".join(
         [
             OUTLINE_HEADER,
-            "Sections before the claims: " + (", ".join(before) if before else "(none)"),
+            before_line,
             f"Claims: {len(doc.claims)}",
             *claim_lines,
-            "Sections after the claims: " + (", ".join(after) if after else "(none)"),
+            after_line,
         ]
     )
 

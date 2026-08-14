@@ -224,3 +224,22 @@ def rename_version(
         return crud.rename_version(db, version, body.name)
     except crud.NameTaken as taken:
         raise _version_name_conflict(taken.args[0]) from None
+
+
+@router.delete("/{document_id}/versions/{version_number}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_version(
+    document_id: int = Path(ge=1, le=MAX_ID),
+    version_number: int = Path(ge=1, le=MAX_ID),
+    db: Session = Depends(get_db),
+) -> None:
+    """Deletes one version. A document can never be left with zero versions —
+    that is refused with 409 rather than silently emptying the patent. Other
+    versions keep their own numbers; nothing here renumbers or reorders them.
+    """
+    version = _version_or_404(db, document_id, version_number)
+    if crud.count_versions(db, document_id) <= 1:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Cannot delete the only version of a patent.",
+        )
+    crud.delete_version(db, version)

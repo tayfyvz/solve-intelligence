@@ -153,6 +153,15 @@ export function renameVersion(
 }
 
 /**
+ * 204 No Content on success. A 409 means the server refused to delete a
+ * document's only remaining version — its `detail` is already a readable
+ * sentence, surfaced verbatim like every other conflict.
+ */
+export function deleteVersion(id: number, versionNumber: number): Promise<void> {
+  return request<void>(() => http.delete(`/api/documents/${id}/versions/${versionNumber}`));
+}
+
+/**
  * Run 1. Returns one of six outcomes; `status: "error"` is a 200 with a message,
  * not an exception, so this throws only on transport or HTTP failures.
  *

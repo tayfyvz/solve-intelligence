@@ -138,6 +138,13 @@ So:
   "section", `section_heading` set to that heading.
 - "the request names something this document does not contain" means the OUTLINE does not
   list it. It never means "I cannot see its text from here".
+- The outline sometimes says a claim or a run of sections has "text with no heading tag
+  that reads as its own heading" and names it in quotes. That is a section the user typed
+  by hand — often by bolding a short line instead of using the H1/H2/H3 toolbar button —
+  so it never got a heading tag and does not appear as a normal section name. Treat it
+  exactly like a section the outline lists under a real heading: a question naming it is
+  RESOLVED, intent "answer", target_kind "section", `section_heading` set to that text.
+  It is content the document already contains, not something missing.
 
 WRITING THE QUESTION
 - One sentence. Plain English. Name what you DO understand, then ask for the one missing

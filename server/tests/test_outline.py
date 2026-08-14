@@ -145,3 +145,123 @@ def test_claims_excerpt_selects_and_never_truncates() -> None:
 def test_claims_excerpt_is_empty_for_unknown_claims(numbers: list[int]) -> None:
     """The caller omits the block entirely rather than emitting a bare header."""
     assert claims_excerpt(parse(SEED_1), numbers) == ""
+
+
+# ------------------------------------- hand-typed pseudo-headings (product owner's bug)
+#
+# A user who adds a new "section" by selecting a short line and bolding it, instead of
+# using the H1/H2/H3 toolbar buttons, produces a plain <p> with a whole-block bold mark —
+# not a heading tag. document.py's claims-region absorption then folds that paragraph
+# (and whatever follows it) into the preceding claim's continuation blocks; a paragraph
+# before the claims heading with the same shape lands, unlabeled, inside whichever real
+# section's body it sits in. Either way `_headings()` never sees it, so `understand` -
+# which is told "the OUTLINE does not list it" means "this document does not contain
+# it" - dead-ends on a question naming it, even though the words are right there in the
+# document. These tests pin `build_outline`'s fix: name the words, don't move them.
+
+DETAILS_AFTER_CLAIMS = (
+    "<p>Field of invention text.</p><h1>Claims</h1>"
+    "<p>1. A device comprising a widget.</p>"
+    "<p><strong>Details</strong></p>"
+    "<p>The widget is round and blue in preferred embodiments.</p>"
+)
+
+DETAILS_BEFORE_CLAIMS = (
+    "<h2>Background</h2><p>Background text here.</p>"
+    "<p><strong>Details</strong></p><p>The widget is round and blue.</p>"
+    "<h1>Claims</h1><p>1. A device comprising a widget.</p>"
+)
+
+TWO_PSEUDO_HEADINGS = (
+    "<p>Field.</p><h1>Claims</h1><p>1. A device.</p>"
+    "<p><strong>Details</strong></p><p>Round and blue.</p>"
+    "<p><strong>Test Results</strong></p><p>Passed all tests.</p>"
+)
+
+
+def test_pseudo_heading_swallowed_into_a_claim_is_named_in_the_outline() -> None:
+    """Case 1 (the reported bug): a hand-typed 'section' after the claims, with no
+    heading tag, is folded into claim 1's continuation blocks by document.py. The outline
+    must still name it, or `understand` can never resolve a question about it."""
+    doc = parse(DETAILS_AFTER_CLAIMS)
+    assert doc.postamble == []  # confirms the swallow: nothing "after the claims"
+    assert len(doc.claims[0].blocks) == 3  # the numbered block + "Details" + its body
+    out = build_outline(doc)
+    assert '"Details"' in out
+    assert "reads as its own heading" in out
+    assert "[+2 more paragraphs]" in out  # the existing note is not replaced, only extended
+
+
+def test_pseudo_heading_in_the_preamble_is_named_in_the_outline() -> None:
+    """Case 2: a hand-typed 'section' between two real headings does NOT get swallowed
+    into a claim (claims absorption is claims-region-specific) — it merges invisibly into
+    the PREVIOUS section's body instead, a milder but related mislabeling."""
+    doc = parse(DETAILS_BEFORE_CLAIMS)
+    # Confirms the milder defect: "Details" has no heading tag of its own, so it is part
+    # of the Background section's body, not a section boundary.
+    assert [b.tag for b in doc.preamble] == ["h2", "p", "p", "p"]
+    out = build_outline(doc)
+    assert "Sections before the claims: Background, Claims (heading)" in out
+    assert '"Details"' in out
+    assert "reads as its own heading" in out
+
+
+def test_multiple_pseudo_headings_in_a_row_all_compound_into_one_claim_and_all_are_named() -> None:
+    """Case 3: repeated hand-typed sections after the claims compound into the SAME
+    claim (document.py's absorption loop has no way to stop early), and the outline must
+    name every one of them, not just the first."""
+    doc = parse(TWO_PSEUDO_HEADINGS)
+    assert len(doc.claims[0].blocks) == 5  # numbered block + 2 x (heading + body)
+    out = build_outline(doc)
+    assert '"Details"' in out
+    assert '"Test Results"' in out
+
+
+def test_pseudo_heading_content_was_always_reachable_via_build_context() -> None:
+    """The other half of the bug: confirms the content itself was NEVER lost. Retrieval
+    (`build_context`) already renders a claim's continuation blocks in full, so once
+    `understand` resolves the request (now that the outline names it), the answer node
+    has always had what it needs. This is why the fix lives in `build_outline`, not in
+    `document.py` or `build_context`."""
+    doc = parse(DETAILS_AFTER_CLAIMS)
+    view = build_context(doc, {"detail"})
+    assert "Details" in view.text
+    assert "round and blue" in view.text
+    assert view.omitted == ()
+
+
+def test_bold_sentence_is_not_mistaken_for_a_pseudo_heading() -> None:
+    """A negative case, guarding the heuristic's bound: bold prose that ends like a
+    sentence, or simply runs long, must not be flagged — only a short, unpunctuated,
+    wholly-bold line reads as a hand-typed section name."""
+    doc = parse(
+        "<h1>Claims</h1><p>1. A device.</p>"
+        "<p><strong>The widget is round and blue in every embodiment described here.</strong></p>"
+    )
+    out = build_outline(doc)
+    assert "reads as its own heading" not in out
+
+
+def test_real_multi_paragraph_claim_is_not_flagged_as_a_pseudo_heading() -> None:
+    """Regression guard: Patent 1's claim 1 genuinely spans five paragraphs of ordinary
+    (unbolded) prose. Nothing about the fix may cause the outline to start treating a
+    real claim's continuation as a mislabeled section."""
+    out = build_outline(parse(SEED_1))
+    assert "reads as its own heading" not in out
+
+
+def test_pseudo_heading_in_a_headingless_document_is_still_named() -> None:
+    """Case 4: a `.txt`-imported document with no headings at all (the `headed=False`
+    path in `ContextView`) can still carry a hand-typed pseudo-heading if the user adds
+    one after import. The outline's naming does not depend on the document having any
+    real headings elsewhere."""
+    doc = parse(
+        "<p>Plain opening prose with no heading at all.</p>"
+        "<p><strong>Details</strong></p><p>More prose, still no real heading anywhere.</p>"
+    )
+    assert doc.claims == []  # no claims region: everything is preamble
+    out = build_outline(doc)
+    assert '"Details"' in out
+    view = build_context(doc, {"detail"})
+    assert view.headed is False
+    assert "Details" in view.text

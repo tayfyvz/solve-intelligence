@@ -117,6 +117,19 @@ def get_version(db: Session, document_id: int, version_number: int) -> DocumentV
     )
 
 
+def count_versions(db: Session, document_id: int) -> int:
+    """How many versions a document has. The router's only use is the "never
+    zero versions" guard, so this is a count, not a fetch of the rows."""
+    return (
+        db.scalar(
+            select(func.count())
+            .select_from(DocumentVersion)
+            .where(DocumentVersion.document_id == document_id)
+        )
+        or 0
+    )
+
+
 def max_version_number(db: Session, document_id: int) -> int:
     """0 when the document has no versions."""
     return db.scalar(
@@ -241,6 +254,18 @@ def update_version(db: Session, version: DocumentVersion, content: str) -> Docum
     db.commit()
     db.refresh(version)
     return version
+
+
+def delete_version(db: Session, version: DocumentVersion) -> None:
+    """Deletes one version. The caller must already have refused deleting a
+    document's last remaining version — this layer does not re-check, so it is
+    never called with a document about to be left at zero.
+
+    Other versions keep their own `version_number`: it is a stable identifier,
+    not a positional index, so nothing here renumbers what remains.
+    """
+    db.delete(version)
+    db.commit()
 
 
 def rename_version(db: Session, version: DocumentVersion, name: str) -> DocumentVersion:

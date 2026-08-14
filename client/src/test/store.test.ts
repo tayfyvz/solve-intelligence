@@ -23,12 +23,14 @@ vi.mock("../api", async (importOriginal) => ({
   createVersion: vi.fn(),
   updateVersion: vi.fn(),
   renameVersion: vi.fn(),
+  deleteVersion: vi.fn(),
 }));
 
 const {
   ApiError,
   createDocument,
   createVersion,
+  deleteVersion: apiDeleteVersion,
   getDocument,
   getVersion,
   listDocuments,
@@ -116,6 +118,7 @@ beforeEach(() => {
     createVersion,
     updateVersion,
     renameVersion,
+    apiDeleteVersion,
   ]) {
     fn.mockReset();
   }
@@ -920,6 +923,112 @@ describe("creating and renaming", () => {
 
     await expect(renaming).resolves.toBe(false);
     expect(store().title).toBe("Patent 2");
+    expect(store().saving).toBe(false);
+  });
+});
+
+describe("deleting a version", () => {
+  it("deletes another version and only patches the counts, leaving the open one alone", async () => {
+    apiDeleteVersion.mockResolvedValue(undefined);
+    useDocumentStore.setState({
+      documentId: 1,
+      versionNumber: 2,
+      versionName: "Version 2",
+      versions: [summary(2), summary(1)],
+      versionsTotal: 2,
+      content: "<p>doc 1 v2</p>",
+      dirty: true,
+      documents: [{ id: 1, title: "Patent 1", version_count: 2, updated_at: STAMP }],
+    });
+
+    await expect(store().deleteVersion(1)).resolves.toBe(true);
+
+    expect(apiDeleteVersion).toHaveBeenCalledWith(1, 1);
+    expect(store().versions.map((v) => v.version_number)).toEqual([2]);
+    expect(store().versionsTotal).toBe(1);
+    expect(store().documents[0].version_count).toBe(1);
+    // Deleting a version that is not open touches neither the editor nor dirty.
+    expect(store().versionNumber).toBe(2);
+    expect(store().content).toBe("<p>doc 1 v2</p>");
+    expect(store().dirty).toBe(true);
+    expect(getDocument).not.toHaveBeenCalled();
+  });
+
+  // The DoD case: deleting the OPEN version must not leave the UI pointing at a
+  // version that no longer exists. It falls back exactly like a first open —
+  // re-asking the server for the newest remaining version.
+  it("deleting the open version reopens the document on the newest survivor", async () => {
+    apiDeleteVersion.mockResolvedValue(undefined);
+    getDocument.mockResolvedValue(detail(1, 1, 1));
+    listVersions.mockResolvedValue(versionPage([1]));
+    getVersion.mockResolvedValue(version(1, 1));
+    useDocumentStore.setState({
+      documentId: 1,
+      versionNumber: 2,
+      versionName: "Version 2",
+      versions: [summary(2), summary(1)],
+      versionsTotal: 2,
+      content: "<p>doc 1 v2</p>",
+      dirty: true,
+    });
+
+    await expect(store().deleteVersion(2)).resolves.toBe(true);
+
+    expect(apiDeleteVersion).toHaveBeenCalledWith(1, 2);
+    // selectDocument(1) ran and landed on the version the server now names newest.
+    expect(getDocument).toHaveBeenCalledWith(1);
+    expect(store().versionNumber).toBe(1);
+    expect(store().content).toBe("<p>doc 1 v1</p>");
+    expect(store().dirty).toBe(false);
+  });
+
+  it("reports the server's 409 and changes nothing", async () => {
+    apiDeleteVersion.mockRejectedValue(
+      new ApiError(409, "Cannot delete the only version of a patent."),
+    );
+    useDocumentStore.setState({
+      documentId: 1,
+      versionNumber: 1,
+      versions: [summary(1)],
+      versionsTotal: 1,
+    });
+
+    await expect(store().deleteVersion(1)).resolves.toBe(false);
+
+    expect(store().error).toBe("Cannot delete the only version of a patent.");
+    expect(store().versions).toHaveLength(1);
+    expect(store().versionsTotal).toBe(1);
+  });
+
+  it("refuses with nothing open and calls no api helper", async () => {
+    await expect(store().deleteVersion(1)).resolves.toBe(false);
+    expect(store().error).toBe("There is no open patent.");
+    expect(apiDeleteVersion).not.toHaveBeenCalled();
+  });
+
+  it("pendingAction names the delete in flight and clears when it resolves", async () => {
+    let finish: (() => void) | undefined;
+    apiDeleteVersion.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    useDocumentStore.setState({
+      documentId: 1,
+      versionNumber: 2,
+      versions: [summary(2), summary(1)],
+      versionsTotal: 2,
+    });
+
+    const deleting = store().deleteVersion(1);
+    expect(store().pendingAction).toBe("deleteVersion");
+    expect(store().saving).toBe(true);
+
+    finish!();
+    await deleting;
+
+    expect(store().pendingAction).toBeNull();
     expect(store().saving).toBe(false);
   });
 });

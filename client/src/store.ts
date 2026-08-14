@@ -7,6 +7,7 @@ import { create } from "zustand";
 import {
   createDocument as apiCreateDocument,
   createVersion,
+  deleteVersion as apiDeleteVersion,
   getDocument,
   getVersion,
   listDocuments,
@@ -27,7 +28,8 @@ export type PendingAction =
   | "saveAsNew"
   | "createDocument"
   | "renameDocument"
-  | "renameVersion";
+  | "renameVersion"
+  | "deleteVersion";
 
 /**
  * Shared state only: something is here because two or more components need it.
@@ -97,6 +99,12 @@ interface DocumentState {
   createDocument(title: string, content?: string): Promise<boolean>;
   renameDocument(id: number, title: string): Promise<boolean>;
   renameVersion(n: number, name: string): Promise<boolean>;
+  /**
+   * Refused server-side (409) when `n` is a document's only version — the UI
+   * never lets the user reach that click (see PatentTree), but the store still
+   * has to report it rather than assume.
+   */
+  deleteVersion(n: number): Promise<boolean>;
   save(): Promise<boolean>;
   /**
    * `name` is threaded straight through to the existing `createVersion(…, name)`, so
@@ -485,6 +493,49 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           ? { versionName: nameOf(updated) }
           : null),
       });
+      return true;
+    } catch (error) {
+      if (!isCurrent()) return false;
+      set({ error: toMessage(error) });
+      return false;
+    } finally {
+      set({ saving: false, pendingAction: null });
+    }
+  },
+
+  /**
+   * Deletes one version of the open patent. `captureRequest`, like every other
+   * write here — but when the deleted version is the one open in the editor,
+   * it hands off to `selectDocument`, which picks the newest survivor exactly
+   * the way the app already picks a version the first time a patent opens.
+   * That inner call owns its own token bump; this action's job ends once it
+   * has kicked it off.
+   */
+  async deleteVersion(n) {
+    const id = get().documentId;
+    if (id === null) {
+      set({ error: "There is no open patent." });
+      return false;
+    }
+    const isCurrent = captureRequest();
+    set({ saving: true, pendingAction: "deleteVersion", error: null });
+    try {
+      await apiDeleteVersion(id, n);
+      if (!isCurrent()) return false;
+      const wasOpen = get().versionNumber === n;
+      set({
+        versions: get().versions.filter((v) => v.version_number !== n),
+        versionsTotal: get().versionsTotal - 1,
+        // The patent row shows a version count too; without this it keeps
+        // saying the old total next to a list that now shows one fewer.
+        documents: get().documents.map((d) =>
+          d.id === id ? { ...d, version_count: d.version_count - 1 } : d,
+        ),
+      });
+      // The deleted version's content is gone; there is nothing left on screen
+      // to call dirty. Re-opening the patent is exactly what a first load does
+      // — it asks the server which version is newest now and opens that one.
+      if (wasOpen) await get().selectDocument(id);
       return true;
     } catch (error) {
       if (!isCurrent()) return false;

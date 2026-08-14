@@ -26,7 +26,7 @@ PATH_PARAMS = {"id": "document_id", "versionNumber": "version_number"}
 # whole file pass while guarding nothing, so the counts are asserted too.
 # list, create, get, rename document; list, get, create, update, rename version;
 # POST /api/ai/chat; POST /api/ai/apply.
-EXPECTED_ROUTES = 12
+EXPECTED_ROUTES = 13
 EXPECTED_TYPES = {
     "DocumentSummary",
     "DocumentDetail",

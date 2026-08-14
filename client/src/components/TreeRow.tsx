@@ -17,11 +17,17 @@ export interface TreeRowProps {
   editing: boolean;
   /** Set on the patent rows only, which expand to show their versions. */
   expanded?: boolean;
+  /** Names the delete button, e.g. `Delete version 3`. Omitted entirely on patent
+   *  rows — deleting a whole patent is a different, larger operation. */
+  deleteLabel?: string;
   onSelect(): void;
   onEdit(): void;
   onCancelEdit(): void;
   /** Resolves to an error sentence to show under the field, or null on success. */
   onRename(value: string): Promise<string | null>;
+  /** Present only where delete is offered at all — version rows with more than
+   *  one version. Its absence is what hides the button, not a boolean flag. */
+  onDelete?(): void;
 }
 
 /**
@@ -41,10 +47,12 @@ export default function TreeRow({
   renameLabel,
   editing,
   expanded,
+  deleteLabel,
   onSelect,
   onEdit,
   onCancelEdit,
   onRename,
+  onDelete,
 }: TreeRowProps) {
   if (editing) {
     return (
@@ -96,6 +104,27 @@ export default function TreeRow({
           <path d="M13.6 2.6a1.9 1.9 0 0 1 2.7 2.7l-.8.8-2.7-2.7.8-.8ZM11.7 4.5l2.7 2.7-7 7H4.7v-2.7l7-7Z" />
         </svg>
       </button>
+      {/* Same opacity language as the pencil above, in red: an affordance that
+          reads as destructive without a second interaction pattern to learn.
+          Present only when the caller passes onDelete — see its doc comment. */}
+      {onDelete && (
+        <button
+          type="button"
+          aria-label={deleteLabel}
+          disabled={disabled}
+          onClick={onDelete}
+          className="focus-ring flex w-6 shrink-0 items-center justify-center rounded-md text-slate-700 opacity-60 transition-opacity duration-150 hover:bg-red-50 hover:text-red-700 focus-visible:opacity-100 group-hover:opacity-100 max-lg:opacity-100 disabled:opacity-30"
+        >
+          {/* Trash can. aria-hidden because the button already has a name. */}
+          <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5">
+            <path
+              fillRule="evenodd"
+              d="M8 3a1 1 0 0 0-1 1v.5H4.5a1 1 0 0 0 0 2H5l.6 9.1A2 2 0 0 0 7.6 17.4h4.8a2 2 0 0 0 2-1.8L15 5.5h.5a1 1 0 1 0 0-2H13V4a1 1 0 0 0-1-1H8Zm-.2 5.8a.7.7 0 0 1 1.4 0v5.4a.7.7 0 0 1-1.4 0V8.8Zm3.4-.7a.7.7 0 0 0-.7.7v5.4a.7.7 0 0 0 1.4 0V8.8a.7.7 0 0 0-.7-.7Z"
+              clipRule="evenodd"
+            />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }

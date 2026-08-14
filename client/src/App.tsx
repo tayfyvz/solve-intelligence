@@ -87,6 +87,7 @@ export default function App() {
   const createDocument = useDocumentStore((s) => s.createDocument);
   const renameDocument = useDocumentStore((s) => s.renameDocument);
   const renameVersion = useDocumentStore((s) => s.renameVersion);
+  const deleteVersion = useDocumentStore((s) => s.deleteVersion);
   const save = useDocumentStore((s) => s.save);
   const saveAsNewVersion = useDocumentStore((s) => s.saveAsNewVersion);
   const clearError = useDocumentStore((s) => s.clearError);
@@ -230,6 +231,7 @@ export default function App() {
               messageOnFailure(() => renameDocument(id, newTitle))
             }
             onRenameVersion={(n, name) => messageOnFailure(() => renameVersion(n, name))}
+            onDeleteVersion={(n) => messageOnFailure(() => deleteVersion(n))}
             onPageDocuments={(offset) => void loadDocuments(offset)}
             onShowMoreVersions={() => void loadMoreVersions()}
           />
