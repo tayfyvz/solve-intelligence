@@ -59,10 +59,25 @@ class Settings(BaseSettings):
     # that it releases the REQUEST, not the worker thread (PLAN §3.4 point 3, §28.3).
     ai_request_timeout_seconds: float = 75.0
     proposal_ttl_seconds: int = 900
-    # None => the kwarg is omitted entirely. 4Z measured reasoning_effort="low" as
-    # ACCEPTED on gpt-5.2-2025-12-11, so "low" is the shipped value; it stays a setting
-    # because an unsupported kwarg would be a 400 on every single call.
-    openai_reasoning_effort: str | None = "low"
+    # None => the kwarg is omitted entirely, and None is the SHIPPED value.
+    #
+    # 4Z measured `reasoning_effort="low"` accepted, and separately measured
+    # `temperature` 0.0/1.0/2.0 accepted. Both measurements are correct. The
+    # COMBINATION is not: gpt-5.2-2025-12-11 rejects `reasoning_effort` together with
+    # any `temperature` other than the default 1, with
+    #   400 "Unsupported value: 'temperature' does not support 0.0 with this model."
+    # Measured 2026-08-14 (PLAN §27.4 correction 40):
+    #   effort + no temperature -> OK      effort + temperature=0.0 -> 400
+    #   effort + temperature=1.0 -> OK     no effort + temperature=0.0 -> OK
+    # §21.2 sends temperature=0 on understand/plan_ops/judge, so with effort="low"
+    # three of the five nodes 400 on every call and the feature does not work at all.
+    #
+    # `reasoning_effort` is the one that goes, because 4Z also measured
+    # `reasoning_tokens == 0` on all 14 calls — it buys nothing measurable on this
+    # model — whereas temperature=0 is what makes the same instruction resolve the
+    # same way twice, which is the whole of §21.2's deterministic/generative split.
+    # Setting this to a value again will 400 unless §21.2's temperatures go too.
+    openai_reasoning_effort: str | None = None
 
     @field_validator("cors_origins", mode="before")
     @classmethod

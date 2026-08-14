@@ -178,6 +178,9 @@ OPERATION VOCABULARY — these six and nothing else:
   insert_claim   (after_claim_number, text)        — after_claim_number 0 means before claim 1
   replace_claim  (claim_number, text)
   insert_section (heading, paragraphs, position: before_claims|after_claims)
+                 — Background, Field, Summary and Description of Related Art are
+                   parts of the specification and go BEFORE_CLAIMS. after_claims is
+                   for the few sections that follow the claims, such as an Abstract.
   replace_text   (find, replace)
 
 RULES
@@ -231,6 +234,9 @@ OPERATION VOCABULARY — these six and nothing else:
   insert_claim   (after_claim_number, text)        — after_claim_number 0 means before claim 1
   replace_claim  (claim_number, text)
   insert_section (heading, paragraphs, position: before_claims|after_claims)
+                 — Background, Field, Summary and Description of Related Art are
+                   parts of the specification and go BEFORE_CLAIMS. after_claims is
+                   for the few sections that follow the claims, such as an Abstract.
   replace_text   (find, replace)
 
 DRAFTING RULES
@@ -295,6 +301,12 @@ JUDGE_SYSTEM = """\
 You review one proposed patent claim edit before it is shown to a user. You are the last
 check. You do not rewrite anything — you return a verdict.
 
+SCOPE FIRST. Each proposed change is shown as `kind: text`. Checks 1, 2, 3 and 5 apply to
+CLAIM operations only — insert_claim and replace_claim. An `insert_section` is ordinary
+specification prose, not a claim: it is SUPPOSED to be multi-sentence descriptive text, so
+never fail it for claim form, and judge it on check 4 alone. Failing a Background section
+for "not being a single-sentence claim" is a false alarm the user has to read past.
+
 Check the proposed text against every point below, in order:
 
 1. CLAIM FORM. Is it a single sentence? Does it read as a claim rather than as prose or a
@@ -351,6 +363,13 @@ RULES
 2. Every factual statement must be supported by a citation. A citation quotes a short span
    VERBATIM from the material below — copy it exactly, character for character. Quotes are
    checked automatically against the document, and an invented quote is discarded.
+2a. Quote the DOCUMENT'S OWN WORDS ONLY. The material below is wrapped in scaffolding this
+   program added to lay it out for you — section rules like `--- CLAIMS (9) ---`, the `[4]`
+   number prefix in front of each claim, and the outline's summary lines. None of that
+   appears in the document the user is reading, so a quote containing any of it fails the
+   automatic check and the user is shown a warning about an answer that was in fact correct.
+   If a question is about counts or structure, answer it from the outline and cite the
+   claim TEXT you are counting, not the heading that counts it.
 3. `kind` is "claim" with the claim number as `ref`, "section" with the heading as `ref`,
    or "prior_art" with "uploaded file" as `ref`.
 4. Be brief. Two or three sentences is usually right.

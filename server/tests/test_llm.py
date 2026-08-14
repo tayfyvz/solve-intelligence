@@ -290,3 +290,66 @@ def test_only_two_modules_import_openai() -> None:
     router_source = (app_dir / "routers/ai.py").read_text()
     calls = re.findall(r"\bopenai\.(\w+)", router_source)
     assert all(name.endswith("Error") for name in calls), calls
+
+
+def test_l11_reasoning_effort_and_a_non_default_temperature_are_never_sent_together() -> None:
+    """L11 — the combination gpt-5.2-2025-12-11 rejects.
+
+    MEASURED LIVE 2026-08-14 against the real API (PLAN §27.4 correction 40):
+
+        reasoning_effort="low" + no temperature      -> ACCEPTED
+        reasoning_effort="low" + temperature=1.0     -> ACCEPTED
+        no reasoning_effort    + temperature=0.0     -> ACCEPTED
+        reasoning_effort="low" + temperature=0.0     -> 400 Unsupported value
+
+    4Z measured the two parameters INDEPENDENTLY and recorded both as accepted. Both
+    of those measurements are correct; the combination was never tried, and the
+    shipped configuration used exactly the combination that fails — so three of the
+    five nodes returned 400 on every live call and the feature did not work at all.
+    Nothing caught it because, deliberately, no test in this suite makes a live call.
+
+    This test is the standing guard: it walks the REAL per-node temperatures from
+    §21.2 against the REAL default setting, so re-enabling `reasoning_effort` without
+    also clearing those temperatures fails here instead of in front of a reviewer.
+    """
+    settings = get_settings()
+    per_node = {
+        "understand": llm.UNDERSTAND_TEMPERATURE,
+        "plan": llm.PLAN_TEMPERATURE,
+        "draft": llm.DRAFT_TEMPERATURE,
+        "judge": llm.JUDGE_TEMPERATURE,
+        "answer": llm.ANSWER_TEMPERATURE,
+    }
+    if not settings.openai_reasoning_effort:
+        # The shipped configuration. Temperatures are then free, which is the point of
+        # dropping reasoning_effort rather than the deterministic split.
+        return
+
+    offenders = [n for n, t in per_node.items() if t is not None and t != 1.0]
+    assert not offenders, (
+        f"openai_reasoning_effort={settings.openai_reasoning_effort!r} is set while "
+        f"{offenders} still send a non-default temperature. gpt-5.2 rejects that "
+        "combination with a 400 on every call."
+    )
+
+
+def test_l12_the_shipped_call_omits_reasoning_effort() -> None:
+    """L12 — the fix, asserted on the kwargs actually handed to the SDK.
+
+    L11 above reasons about configuration; this one watches the wire. Together they
+    say: the default configuration sends temperature=0 on the deterministic nodes and
+    sends no reasoning_effort at all.
+    """
+    get_settings.cache_clear()
+    client = install(parsed=PLAN)
+
+    _parse(
+        messages=[{"role": "user", "content": "x"}],
+        response_format=EditPlan,
+        node="plan",
+        max_output_tokens=llm.PLAN_TOKENS,
+        temperature=llm.PLAN_TEMPERATURE,
+    )
+
+    assert "reasoning_effort" not in client.kwargs
+    assert client.kwargs["temperature"] == 0.0

@@ -72,11 +72,28 @@ Confirmed by running the real libraries — do not re-derive or assume otherwise
 - **`openai` 1.109.1.** `client.chat.completions.parse` exists on the **stable** path.
   `openai.resources.beta.chat` **does not exist** — `client.beta.chat.completions.parse` will
   raise. Model is `gpt-5.2-2025-12-11`; `client.models.retrieve` resolves it (`owned_by=system`).
-- **`temperature` IS accepted on `gpt-5.2-2025-12-11`** — measured at 0.0, 1.0 and 2.0, all
-  accepted (4Z, 2026-08-13). An earlier version of this file said "a reasoning model: do not send
-  `temperature`"; **that was an assumption and it was wrong.** The shipped rule is a deliberate
-  split, not a prohibition: send `temperature=0` on the deterministic-output nodes (`understand`,
-  `plan_ops`, `judge`) and omit it on `draft`/`answer` (PLAN §21.2).
+- **`temperature` and `reasoning_effort` are MUTUALLY EXCLUSIVE on `gpt-5.2-2025-12-11`, and that
+  is the fact that matters.** Measured 2026-08-14 (PLAN §27.4 correction 40):
+
+  | `reasoning_effort` | `temperature` | Result |
+  |---|---|---|
+  | `"low"` | omitted | accepted |
+  | `"low"` | `1.0` | accepted |
+  | absent | `0.0` | accepted |
+  | `"low"` | `0.0` | **400 — "does not support 0.0 with this model"** |
+
+  4Z measured each parameter **on its own** and recorded both as accepted; both of those
+  measurements are correct, and the combination was never tried. The shipped config used exactly
+  the failing pair, so `understand`, `plan_ops` and `judge` returned 400 on every live call.
+  **The resolution: `openai_reasoning_effort` defaults to `None`.** `reasoning_effort` is the one
+  dropped because 4Z also measured `reasoning_tokens == 0` on all 14 calls — it buys nothing here —
+  while `temperature=0` is load-bearing for PLAN §21.2's deliberate split: `temperature=0` on the
+  deterministic-output nodes (`understand`, `plan_ops`, `judge`), omitted on `draft`/`answer`.
+  **Re-enabling `reasoning_effort` requires clearing those three temperatures in the same change**;
+  tests `L11` and `L12` fail if you do only one of the two.
+  *(An earlier version of this file said "a reasoning model: do not send `temperature`". That was
+  an assumption, and it was wrong for the stated reason — but it happened to describe a working
+  configuration, which is why the correction to it did not surface this until a live click-through.)*
 - **Reasoning tokens are zero on this model.** `usage.completion_tokens_details.reasoning_tokens`
   was **0 on all 14 measured calls**; completion tokens ranged 74–129. `max_completion_tokens`
   ceilings are therefore bounded by the *visible* answer only — keep them generous because they
