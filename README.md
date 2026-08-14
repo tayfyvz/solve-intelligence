@@ -82,7 +82,7 @@ Good luck!
 
 **Both tasks are implemented.** Task 1 is document versioning. Task 2 is Option A: AI-powered
 editing, where the model emits **structured operations** and Python applies them — it never writes
-the document's HTML. **876 tests pass (619 backend, 257 frontend), and none of them needs an API
+the document's HTML. **877 tests pass (620 backend, 257 frontend), and none of them needs an API
 key.**
 
 The rest of this section is the reasoning, because the interesting parts of this submission are
@@ -337,7 +337,7 @@ acknowledgement concludes we did not look.
 
 ## Testing
 
-**876 tests, and zero of them require an API key.** They target meaningful behaviour rather than a
+**877 tests, and zero of them require an API key.** They target meaningful behaviour rather than a
 coverage number.
 
 - The **parse → render → parse round-trip on both seed patents** is the safety net the whole AI

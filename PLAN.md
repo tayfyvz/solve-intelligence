@@ -9953,13 +9953,13 @@ for the same reason: **it can only count what a table row declares.** A phase wh
 "harden what exists" still needs somewhere to declare what it added.
 
 **A note on this number versus what `pytest`/`vitest` print.** This section counts **gate rows** —
-specified, named behaviours. The suites report **619 backend and 257 frontend test functions**,
+specified, named behaviours. The suites report **620 backend and 257 frontend test functions**,
 because a single gate row is frequently a `parametrize`/`it.each` covering several cases (one 404
 row over five routes, one exception→status table, one file-validation matrix). The two numbers
-measure different things and are both correct; **340 is the number this document owns**, and 876 is
+measure different things and are both correct; **340 is the number this document owns**, and 877 is
 the number the runners own. *(708 → 784: **+76** regression tests added by the QA hardening pass,
 one or more for each defect it found. That pass added no gate rows, so the 340 is unchanged.
-784 → 876: **+92** for the long-patent work — §34 — for the same reason and with the same
+784 → 877: **+93** for the long-patent work — §34 — for the same reason and with the same
 consequence for the 340.)* *(325 → 329: **+3** for the bullet-defined gate tests the extraction missed, and **+1**
 for **`G19`**, the test of `recursion_limit` and its `GraphRecursionError` copy — a bound §3.4
 presented as one of three independently sufficient mechanisms, with a user-facing sentence, that
@@ -10101,7 +10101,7 @@ already-identified bug ship.
 
 Added after the QA hardening pass, on a brief measured against a real 37-page application
 (112,659 characters, 60 claims, 89 description paragraphs) rather than against the two
-two-screen seeds. **+92 tests (784 → 876: 619 backend, 257 frontend).** No gate rows: this
+two-screen seeds. **+93 tests (784 → 877: 620 backend, 257 frontend).** No gate rows: this
 section is the declaration, in the same spirit as §31.2's note about the hardening pass.
 
 ### 34.1 What was wrong
@@ -10245,3 +10245,23 @@ matches the new claims marker, and nothing anywhere depends on unstemmed tokens.
 **A stem is a sort key.** It never reaches the model, the document or a citation, so a
 wrong fold costs relevance and can never cost correctness — L22 asserts the folded form is
 never emitted as a word.
+
+
+### 34.10 Editing a long document — the branch §34 did not touch
+
+§34 is about the `answer` branch. The EDIT branch was checked afterwards and is correct as
+designed: `plan_ops`/`draft`/`judge` see the outline plus `claims_excerpt` of the resolved
+claims only, never the description, because the model emits operations rather than HTML.
+
+Verified live on a 900-claim and a 196,395-char patent:
+
+| Request | Outcome |
+|---|---|
+| "replace every 'membrane' with 'barrier'" | **924 occurrences, ONE `replace_text`**, applied, verified, saved. The model never saw the 924 sites |
+| the same on a document 5,000 chars under the ceiling | refused by `_apply_and_verify`'s result cap; document left **byte-identical** |
+| "rewrite every claim to be broader" (60 claims) | `draft` -> `needs_clarification`, `ops=0`, nothing changed |
+
+The one defect found: the refusal was honest but offered no way through ("without specific
+broadening instructions"). `DRAFT_SYSTEM` rule 13 now separates **large** from **ambiguous** —
+the answer is now *"That is 60 claims and I can change 20 at a time — which range shall I
+start with?"*, which is the operation cap stated as an affordance instead of a wall.

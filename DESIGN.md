@@ -515,6 +515,34 @@ the Background of the Invention text"* and terminated the run before `retrieve` 
 the section. Every node behaved exactly as written; the prompt simply never mentioned that a
 second step exists. `UNDERSTAND_SYSTEM` now says so.
 
+### 5.6b Editing a very long document: the model never sees it
+
+The Q&A branch sends the whole document (§5.6a). **The edit branch deliberately does not**,
+and the reason is not budget — it is that the model emits *operations*, not HTML. To rewrite
+claim 5 it needs claim 5's exact words, not the patent. So `plan_ops`, `draft` and `judge`
+receive the outline (one line per claim, ≤8,000 chars) plus the full text of only the claims
+involved (`claims_excerpt`, ≤30,000). They never see the description at all.
+
+"Rewrite the whole document" is therefore two different requests:
+
+**Mechanical, and fully supported in ONE operation.** `replace_text` is document-wide,
+literal and deterministic. Verified on a 900-claim patent: *"replace every 'membrane' with
+'barrier'"* changed **924 occurrences**, applied, verified and saved, with the warning *"That
+text appears 924 times; all of them were changed."* The model never saw the 924 sites —
+Python did the replacing, so this scales to any document the app accepts.
+
+**Generative, and refused on purpose.** *"Rewrite every claim to be broader"* on 60 claims
+would be 60 authored rewrites in one unreviewable proposal — the exact failure the operation
+vocabulary exists to prevent. Three independent guards stack: the drafter refuses, the
+20-operation cap returns a readable error, and `_apply_and_verify` refuses a result over
+200,000 characters. All three were exercised live; the 907-replacement case hit the third and
+left the document **byte-identical**.
+
+A refusal has to offer the way through, though, and at first it did not — it asked for
+"specific broadening instructions", which leaves the user guessing. `DRAFT_SYSTEM` rule 13
+now separates *large* from *ambiguous*: the answer is now *"That is 60 claims and I can change
+20 at a time — which range shall I start with?"*
+
 ### 5.7 `.txt` upload — two different jobs
 
 A `.txt` dropped on the **chat panel** is reference material: the AI reads it, the server
@@ -618,7 +646,7 @@ land in another. All errors render in the UI, never only in the console.
 Chosen for value rather than coverage percentage.
 
 > **Status: every row below is written and passing.** The count outgrew the "roughly 20" this
-> section originally planned for — 876 in total, 619 backend and 257 frontend — because the AI
+> section originally planned for — 877 in total, 620 backend and 257 frontend — because the AI
 > layer arrived with four deterministic gates of its own. `PLAN.md` §31.2 is the single source of
 > truth for the number. What holds regardless of the count: **none of them requires an API key.**
 

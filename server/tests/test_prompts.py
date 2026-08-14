@@ -320,3 +320,19 @@ def test_the_document_comes_before_the_instruction_in_every_prompt() -> None:
     assert messages[0]["role"] == "system"
     assert "DOC" in messages[0]["content"]
     assert messages[-1] == {"role": "user", "content": "what is claim 1?"}
+
+
+def test_the_drafter_is_told_to_offer_a_range_rather_than_just_refuse() -> None:
+    """A whole-document rewrite is LARGE, not ambiguous, and the two need different answers.
+
+    Live, "rewrite every claim in this patent to be broader" on a 60-claim patent came back
+    "I can't deterministically broaden every claim without specific broadening instructions"
+    — true, and it leaves the user with nothing to do next. The operation cap is 20, so the
+    way through is a range, and the drafter has to know that is available to offer.
+    """
+    assert "SCALE IS NOT AMBIGUITY" in DRAFT_SYSTEM
+    assert "twenty operations" in DRAFT_SYSTEM
+    # The deterministic backstop says the same thing, so the two cannot disagree.
+    from app.routers.ai import TOO_MANY_OPERATIONS
+
+    assert "smaller change" in TOO_MANY_OPERATIONS
