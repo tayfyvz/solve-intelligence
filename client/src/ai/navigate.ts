@@ -70,13 +70,48 @@ export interface Match {
 }
 
 /**
+ * One text block, flattened: its characters, and where each one lives in the document.
+ *
+ * `positions[i]` is the document position of `text[i]`. Built per CHARACTER rather than
+ * per node, which is the whole trick: it spans formatting boundaries like a reader does,
+ * and it stays exact across inline nodes that contribute no characters. A `<br>` occupies
+ * a position and contributes nothing to the string, so an offset-plus-start calculation
+ * would drift by one for every hard break in the paragraph — this cannot, because no
+ * position is ever inferred by arithmetic.
+ */
+function flatten(block: PMNode, blockPos: number): { text: string; positions: number[] } {
+  let text = "";
+  const positions: number[] = [];
+  block.forEach((child, offset) => {
+    if (!child.isText || !child.text) return; // a <br> etc: occupies a position, adds no chars
+    const start = blockPos + 1 + offset;
+    for (let i = 0; i < child.text.length; i += 1) {
+      // Lowercased HERE, per character, and one position pushed per OUTPUT unit.
+      // `toLowerCase()` can LENGTHEN a string — "İ" (U+0130) becomes two code units — so
+      // lowercasing the whole block afterwards leaves `positions` shorter than `text`,
+      // every subsequent match lands one character early, and the end position reads off
+      // the end of the array as `undefined + 1` = NaN. A NaN decoration does not throw:
+      // it silently draws nothing, so the user sees a match count with no highlight.
+      const lower = child.text[i].toLowerCase();
+      text += lower;
+      for (let k = 0; k < lower.length; k += 1) positions.push(start + i);
+    }
+  });
+  return { text, positions };
+}
+
+/**
  * Every case-insensitive literal occurrence of `query`, in document order.
  *
- * Matched inside individual TEXT nodes, which is what makes the positions exact. The
- * cost is the honest one: a phrase split by formatting — "biocompatible **material**" —
- * is three text nodes and is not found. Searching a whole block's `textContent` instead
- * would find it and then be off by one for every `<br>` in the block, and highlighting
- * the wrong words is worse than finding fewer of the right ones.
+ * Searched across each text BLOCK, so a phrase split by formatting — "biocompatible
+ * **material**", three text nodes — is found, exactly as a reader sees it. Positions stay
+ * exact because `flatten` records one per character instead of computing them from node
+ * offsets; the earlier per-text-node version could not match across a mark at all, and
+ * the obvious alternative (searching `textContent`) silently misaligns on `<br>`.
+ *
+ * A phrase spanning two PARAGRAPHS is still not found, and that is correct: they are
+ * different blocks with a boundary between them, so there is no contiguous range to
+ * highlight.
  *
  * `limit` bounds the work on a pathological query ("e" in a 900-claim patent); the
  * caller shows the count so a truncated result is never silently presented as complete.
@@ -88,15 +123,21 @@ export function findMatches(doc: PMNode, query: string, limit = 500): Match[] {
   const matches: Match[] = [];
   doc.descendants((node, pos) => {
     if (matches.length >= limit) return false;
-    if (!node.isText || !node.text) return;
-    const haystack = node.text.toLowerCase();
-    let index = haystack.indexOf(needle);
+    if (!node.isTextblock) return true; // keep descending: a list holds its paragraphs
+    const { text, positions } = flatten(node, pos);
+    let index = text.indexOf(needle);
     while (index !== -1 && matches.length < limit) {
-      matches.push({ from: pos + index, to: pos + index + needle.length });
+      matches.push({
+        from: positions[index],
+        // The position AFTER the last matched character, which is not
+        // `positions[index] + length` when a <br> sits inside the match.
+        to: positions[index + needle.length - 1] + 1,
+      });
       // + needle.length, not + 1: overlapping hits of "aa" in "aaaa" are two matches to
       // a reader, not three.
-      index = haystack.indexOf(needle, index + needle.length);
+      index = text.indexOf(needle, index + needle.length);
     }
+    return false; // a textblock's children are inline; nothing below it to search
   });
   return matches;
 }

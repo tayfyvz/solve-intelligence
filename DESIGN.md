@@ -412,22 +412,35 @@ An accusation, about a string this program wrote itself, with no next step in it
 
 **The first fix is not retrieval — it is the budget.** The 30,000-character cap was ~7,500
 tokens against a model that takes hundreds of thousands, so the cliff was self-inflicted.
-`max_answer_context_chars` is now **120,000**, chosen as "the largest real document" rather
-than "the largest the window permits", and the result was **measured, not assumed**:
+`max_answer_context_chars` is now **220,000 — deliberately ABOVE the 200,000-character AI
+input ceiling**, because context renders at ~1.0-1.05x the source HTML. Every document this
+app will accept at all is therefore read WHOLE, and the "I did not see all of…" warning is
+unreachable in production; anything bigger is refused by the 413 before it reaches the
+model. The number was **measured, not assumed**:
 
-| answer-branch budget | context sent | latency (n=6) |
-|---|---|---|
-| 30,000 | 30,000 (fragmented) | median 6.3 s, max 9.3 s, **one call hit the 12 s node timeout** |
-| 120,000 | 106,827 (the whole patent) | **median 2.3 s, min 1.6 s, max 3.5 s** |
+| document | budget | context sent | latency |
+|---|---|---|---|
+| 107,512 chars | 30,000 | 30,000, fragmented | median 6.3 s, max 9.3 s, **one timeout** |
+| 107,512 chars | 120,000 | 106,827 = whole | median 2.3 s, max 3.5 s |
+| 196,395 chars | 120,000 | 119,272, 2 sections cut | median 2.8 s, max 7.2 s |
+| 196,395 chars | 220,000 | 195,464 = whole | **median 1.8 s, max 3.9 s** |
 
-Bigger is *faster* here, which is not the intuition: a fragmented context with elision
-markers makes the model work harder than the document itself. Live, the 107,512-character
+Bigger is *faster* at every size tried, which is not the intuition: a fragmented context
+with elision markers makes the model work harder than the document itself. It is also **cheaper from the
+second turn onwards**, which is the opposite of what everyone assumes. The document sits at
+the front of the system message and is byte-identical on every turn, so the provider's
+automatic prompt cache hits it: **16,128 of 16,243 tokens cached (99.3%)** on turns 2 and 3,
+against a question-scoped context that thrashed the cache (3,712 → **0** → 1,664) because its
+prefix was rebuilt for every question. Cached input bills at a fraction of fresh input, so the
+120,000-char prompt costs less in a conversation than the 30,000-char one it replaced. Live, the 107,512-character
 patent goes to the model whole — `claims_chars=106827 sections_omitted=0 warnings=0`,
 17,601 input tokens, 6.2 s end to end. So on every realistic patent **there is no retrieval
 at all**, and the honesty machinery below is correctly silent.
 
-**Retrieval is what happens above the budget**, which is reachable by design: the AI input
-ceiling is 200,000. `build_context` ranks the non-claim paragraphs by word overlap with the
+**Retrieval is now a safety net rather than a path anyone travels.** It runs only if the
+budget is lowered from its default, which is the shape the tests pin (L2, L16-L23) and the
+thing that keeps tier 5's length guarantee true. It stays because a guarantee with no
+implementation is not a guarantee. `build_context` ranks the non-claim paragraphs by word overlap with the
 question — plus a *capped* bonus for their section heading — packs them to the budget, and
 renders them in document order under `## heading` rules. Five tiers, evaluated and never
 looped, so the same document and question give the same bytes (invariant 10).
@@ -605,7 +618,7 @@ land in another. All errors render in the UI, never only in the console.
 Chosen for value rather than coverage percentage.
 
 > **Status: every row below is written and passing.** The count outgrew the "roughly 20" this
-> section originally planned for — 864 in total, 611 backend and 253 frontend — because the AI
+> section originally planned for — 876 in total, 619 backend and 257 frontend — because the AI
 > layer arrived with four deterministic gates of its own. `PLAN.md` §31.2 is the single source of
 > truth for the number. What holds regardless of the count: **none of them requires an API key.**
 
@@ -686,13 +699,6 @@ a vector store, chunking with overlap, re-ranking models, and any retrieval loop
 
 **Would do next, given more time** — and how it maps onto Solve's stack:
 
-- **Prompt caching on the Q&A branch — the highest-value item on this list.** Now that a whole
-  patent fits in one call, the document sits at the *front* of the prompt and is identical on
-  every turn of a conversation, which is exactly the shape a cached prefix needs. It was
-  impossible before: the old question-scoped context changed the prefix every turn, so nothing
-  could ever hit. Cached input is roughly 90% cheaper and faster to prefill, so this removes the
-  only real objection to sending the whole document — at zero cost to reliability, because the
-  model still sees every word. The smart optimisation here is caching, not smarter retrieval.
 - SQLite → **Postgres on RDS**; the SQLAlchemy models port with a URL change
 - **SuperTokens** for auth, scoping documents to users
 - Option B collaborative editing on the same TipTap surface (Yjs)

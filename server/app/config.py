@@ -33,17 +33,24 @@ class Settings(BaseSettings):
     max_html_chars: int = 200_000  # AI input
     max_instruction_chars: int = 2_000
     max_context_chars: int = 40_000
-    # The Q&A branch's context budget. Large enough that a whole 37-page patent
-    # (~112,000 chars) fits in ONE call, so on every realistic document the model reads
-    # the document rather than a selection from it. MEASURED, not guessed: at a 106,827
-    # char context the `answer` call ran in a median 2.3 s (n=6, min 1.6, max 3.5) —
-    # faster than the same questions at 30,000, where the fragmented context made the
-    # model work harder and one call hit `ai_node_timeout_seconds` outright.
-    # It is NOT `max_html_chars` (200,000): retrieval must stay exercised on the
-    # documents above this, because that range is reachable by design.
+    # The Q&A branch's context budget. Set ABOVE `max_html_chars` on purpose: rendering a
+    # document as context costs ~1.0-1.05x its HTML, so at 220,000 every document this app
+    # will accept at all is read WHOLE, and the "I did not see all of…" warning is
+    # unreachable in production. A document too big for this is too big for `/api/ai/chat`
+    # and gets a clean 413 first.
+    #
+    # MEASURED, not guessed, on a 196,395-char patent — the ceiling:
+    #   budget 120,000 -> 2 sections omitted, median 2.8 s, max 7.2 s
+    #   budget 220,000 -> 0 omitted,          median 1.8 s, max 3.9 s
+    # Bigger is faster: a context full of elision markers makes the model work harder than
+    # the document does. It is also cheaper from turn 2, because a whole-document prefix is
+    # byte-identical every turn and the provider caches it (99.3% hit).
+    #
+    # Retrieval below this is therefore a SAFETY NET, not the normal path — still tested
+    # (L2, L16-L23), still the thing that keeps tier 5's length guarantee true.
     # `claims_excerpt`'s own 30,000 default is a DIFFERENT budget on a different branch
     # (up to 5 calls, not 2) and must not be moved with this one.
-    max_answer_context_chars: int = 120_000
+    max_answer_context_chars: int = 220_000
     max_history_turns: int = 3
 
     # --- AI, Task 2 ------------------------------------------------------

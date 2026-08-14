@@ -27,6 +27,7 @@ from app.ai.document import HEADING_TAGS, Block, ParsedDocument, block_text
 
 __all__ = [
     "STOPWORDS",
+    "content_tokens",
     "ContextView",
     "Section",
     "block_text",
@@ -106,22 +107,92 @@ def build_outline(doc: ParsedDocument, *, max_chars: int = 8000) -> str:
 
 # ------------------------------------------------------- words, for question scoping
 
+_WORD_RE = re.compile(r"[a-z0-9]+")
+
+# A short list of ENGLISH INFLECTIONS and nothing else. It folds "volumes"/"volume",
+# "filters"/"filtering" and "oxygenating"/"oxygenate" together — the mismatch a user
+# actually hits when their question and the patent describe the same thing in different
+# grammatical forms.
+#
+# `-er`/`-ers`/`-ly`/`-est` are DELIBERATELY ABSENT. They were tried and removed: they
+# merge "prime"/"primer" (a PCR primer is not priming) and "number"/"numb", while at the
+# same time SPLITTING "filters"→"filt" from "filtering"→"filter". One suffix family caused
+# both a false match and a miss, which is the worst of both, and in a legal document a
+# false match is the more expensive half.
+#
+# It does NOT touch synonymy: "fill volume" against a document that says "priming volume"
+# still scores zero, and no lexical scheme can fix that. That case is DETECTED instead
+# (`ContextView.matched`) and the user is told to quote a phrase.
+_SUFFIXES = ("ing", "ed")
+_MIN_STEM = 4  # below this, stripping turns "gas" into "ga" and "the" into "th"
+# The trailing `e` measures against a LOWER floor, which is what folds "gases" onto "gas"
+# ("gases" -> "gase" -> "gas") and "bases" onto "bas". At 4 it would stop at "gase" and
+# miss the commonest noun in this domain.
+_MIN_Y_STEM = 3
+
+
+def stem(word: str) -> str:
+    """Fold one English inflection off a word, for scoring only.
+
+    THE TRAILING `e` IS THE POINT, and it is why this is not a two-line suffix strip.
+    Without it "volumes" folds to "volume" while "volume" stays "volume" — the two forms
+    still miss each other and the whole exercise buys nothing. Stripping it from both lands
+    them on "volum", and does the same for "oxygenating"/"oxygenate" and "gases"/"gas".
+
+    A stem is a SORT KEY and nothing else. It never reaches the model, the document or a
+    citation, so a wrong fold costs relevance and can never cost correctness.
+    """
+    for suffix, replacement in (("ies", "y"), ("ied", "y")):
+        if word.endswith(suffix) and len(word) - len(suffix) >= _MIN_Y_STEM:
+            word = word[: -len(suffix)] + replacement
+            break
+    else:
+        for suffix in _SUFFIXES:
+            if word.endswith(suffix) and len(word) - len(suffix) >= _MIN_STEM:
+                word = word[: -len(suffix)]
+                break
+        else:
+            # A plural, but never "less" -> "les": a double s is not an inflection.
+            if word.endswith("s") and not word.endswith("ss") and len(word) - 1 >= _MIN_STEM:
+                word = word[:-1]
+
+    return word[:-1] if word.endswith("e") and len(word) - 1 >= _MIN_Y_STEM else word
+
+
+def tokens(text: str) -> set[str]:
+    """The scoring key for a piece of text: lowercase words, one inflection folded off.
+
+    Both sides of every comparison go through this, so the folding only has to be
+    CONSISTENT, not linguistically correct.
+    """
+    return {stem(word) for word in _WORD_RE.findall(text.lower())}
+
+
 # ~40 common English words. Kept as a literal rather than pulled from a library: it is
 # read once, in a lexical-overlap score, and a dependency for forty strings is a joke.
 # It lives here rather than in `nodes.py` because `build_context` scores sections with
 # it and `outline.py` may not import `nodes.py` — nodes imports outline. `nodes.py`
 # re-exports both names, so every existing caller reads unchanged.
+#
+# RAW, and subtracted BEFORE stemming — see `content_tokens`.
 STOPWORDS = frozenset(
     """a an and are as at be but by can could do does for from has have how i if in
     into is it its me my of on or please should so than that the their them then there
     these they this to was were what when where which who will with would you your""".split()
 )
 
-_WORD_RE = re.compile(r"[a-z0-9]+")
 
+def content_tokens(text: str) -> set[str]:
+    """The question's content words, as scoring keys.
 
-def tokens(text: str) -> set[str]:
-    return set(_WORD_RE.findall(text.lower()))
+    Stopwords are removed BEFORE stemming, and the order is the whole point. Stemming
+    first and subtracting after deletes any content word whose STEM collides with a
+    stopword's: "shoulder" folds to "should", so `tokens(q) - STOPWORDS` silently dropped
+    it and a question about the shoulder of a housing was answered "none of the words in
+    your question appear in this document" — with the word sitting right there. Same for
+    "thane"/"than", "wither"/"with", "theirs"/"their".
+    """
+    return {stem(word) for word in _WORD_RE.findall(text.lower()) if word not in STOPWORDS}
 
 
 # --------------------------------------------------------------------- the sections
@@ -346,19 +417,68 @@ def _claim_lines(claim, *, first_limit: int | None, rest_limit: int | None) -> l
     return lines
 
 
-def _manifest(omitted: tuple[str, ...]) -> list[str]:
+def _manifest(omitted: tuple[str, ...], shown: int, total: int) -> list[str]:
     """The NOT SHOWN block. Built separately from the body because tier 5 cuts the body by
     bytes, and on a 900-claim document that cut severed this block entirely — leaving
     `ANSWER_SYSTEM` rule 2b naming a marker the model was never given, on exactly the
     documents where it matters most."""
     if not omitted:
         return []
+    lines = ["", "--- NOT SHOWN IN FULL ---"]
+    # The NUMBERS, because a model asked "how many embodiments are described?" counts what
+    # is in front of it and does not experience that as guessing. Given the two totals it
+    # can answer honestly instead. Omitted entirely when there is no description at all: a
+    # claims-only document would otherwise be told "you were shown 0 of 0 paragraphs",
+    # which invites it to call the document empty while it is holding twenty claims.
+    if total:
+        lines.append(f"You were shown {shown} of this document's {total} description paragraphs.")
     return [
-        "",
-        "--- NOT SHOWN IN FULL ---",
+        *lines,
         "You have NOT been shown all of: " + ", ".join(omitted) + ".",
         "If the answer is in one of those, say so and name it. Never guess at it.",
     ]
+
+
+# Claim lines kept at each end when a tier windows the claim list. Same shape and the
+# same number as `build_outline`'s `_OUTLINE_KEEP`, because it is the same idea: the ends
+# of a claim set carry the independent claims and the most recently added ones.
+_CLAIMS_KEEP = 10
+
+CLAIMS_OMITTED_MARK = "[… {n} claims in the middle of the list not shown here …]"
+
+
+def _claims_block(
+    doc: ParsedDocument, *, first_limit: int | None, rest_limit: int | None, window: bool
+) -> tuple[list[str], str | None]:
+    """The claim lines, and the label to report if the list itself was cut.
+
+    Windowing exists for one shape: a document whose CLAIMS alone fill the budget. Without
+    it the description is unreachable at every tier — there is no tier in which claims
+    yield to prose — so a question about the Background on a 900-claim document is answered
+    from 289 claims and nothing else, which is not an answer.
+    """
+    if not doc.claims:
+        return ["(none)"], None
+    claims = doc.claims
+    cut: str | None = None
+    if window and len(claims) > 2 * _CLAIMS_KEEP:
+        head, tail = claims[:_CLAIMS_KEEP], claims[-_CLAIMS_KEEP:]
+        # Counted, never labelled by the numbers at the window edges. The parser records
+        # claim numbers VERBATIM, so a document with duplicates produces "claims 3-3" and
+        # one with 21 claims produces "claims 11-11" — both true of nothing. A count is
+        # correct whatever the numbering does.
+        missing = len(claims) - 2 * _CLAIMS_KEEP
+        lines: list[str] = []
+        for claim in head:
+            lines += _claim_lines(claim, first_limit=first_limit, rest_limit=rest_limit)
+        lines.append(CLAIMS_OMITTED_MARK.format(n=missing))
+        for claim in tail:
+            lines += _claim_lines(claim, first_limit=first_limit, rest_limit=rest_limit)
+        return lines, f"{missing} claims in the middle of the claim list"
+    lines = []
+    for claim in claims:
+        lines += _claim_lines(claim, first_limit=first_limit, rest_limit=rest_limit)
+    return lines, cut
 
 
 def _context(
@@ -369,6 +489,7 @@ def _context(
     first_limit: int | None,
     rest_limit: int | None,
     matched: bool = True,
+    window_claims: bool = False,
 ) -> ContextView:
     before, before_partial, before_dropped = _render_region(secs, pack, after_claims=False)
     after, after_partial, after_dropped = _render_region(secs, pack, after_claims=True)
@@ -379,22 +500,27 @@ def _context(
     if doc.claims_heading is not None:
         parts += ["", "--- CLAIMS HEADING ---", block_text(doc.claims_heading)]
     parts += ["", f"--- CLAIMS ({len(doc.claims)}) ---"]
-    if doc.claims:
-        for claim in doc.claims:
-            parts += _claim_lines(claim, first_limit=first_limit, rest_limit=rest_limit)
-    else:
-        parts.append("(none)")
+    claim_lines, claims_cut = _claims_block(
+        doc, first_limit=first_limit, rest_limit=rest_limit, window=window_claims
+    )
+    parts += claim_lines
     parts += ["", "--- SECTIONS AFTER THE CLAIMS ---"]
     parts += after or ["(none)"]
 
-    omitted = tuple(dict.fromkeys(before_partial + after_partial))
+    # The windowed claims are reported in the same list as the sections, because from the
+    # user's side they are the same fact: part of the document was not read.
+    omitted = tuple(
+        dict.fromkeys(before_partial + after_partial + ([claims_cut] if claims_cut else []))
+    )
     # Named, in the context itself, so the model can say "that is in the Detailed
     # Description, which I was not shown" instead of guessing. The user gets the same list
     # as a warning — see `verify.partial_context_warning`.
+    total = sum(len(sec.blocks) for sec in secs)
+    dropped = before_dropped + after_dropped
     return ContextView(
-        text="\n".join([*parts, *_manifest(omitted)]),
+        text="\n".join([*parts, *_manifest(omitted, total - dropped, total)]),
         omitted=omitted,
-        omitted_paragraphs=before_dropped + after_dropped,
+        omitted_paragraphs=dropped,
         matched=matched or not omitted,
         headed=any(s.heading for s in secs) or not secs,
     )
@@ -421,7 +547,12 @@ def build_context(
     reachable by design: `max_html_chars` is 200,000.
 
     Tier 5 is the guarantee: the result is never longer than `max_chars`, for any
-    document, including a pathological single claim of a million characters.
+    document, including a pathological single claim of a million characters — PROVIDED
+    `max_chars` leaves room for the "not shown" manifest, which is re-attached after the
+    hard cut rather than being cut with the body. Below a few hundred characters the
+    manifest alone exceeds the budget and the result overshoots; that is unreachable from
+    `Settings`, where the smallest sane value is four orders of magnitude larger, and the
+    manifest is the one thing worth overshooting for.
     """
     secs = sections(doc)
     order, matched = _rank(secs, set(words))
@@ -435,25 +566,40 @@ def build_context(
     # straight back and the document fell to tier 5's blind cut regardless.
     headings_cost = sum(len(s.label) + 4 for s in secs)
 
-    # (claim first-block limit, claim continuation limit, "pack the sections?")
-    tiers: tuple[tuple[int | None, int | None, bool], ...] = (
-        (None, None, False),  # 1. the whole document
-        (None, None, True),  # 2. claims in full + the paragraphs the question needs
-        (None, 200, True),  # 3. claim continuations trimmed, freeing budget for prose
-        (600, 200, True),  # 4. claims trimmed too — a 900-claim document
+    # (claim first-block limit, claim continuation limit, "pack the sections?",
+    #  "window the claim LIST?")
+    tiers: tuple[tuple[int | None, int | None, bool, bool], ...] = (
+        (None, None, False, False),  # 1. the whole document
+        (None, None, True, False),  # 2. claims in full + the paragraphs the question needs
+        (None, 200, True, False),  # 3. claim continuations trimmed, freeing budget for prose
+        (600, 200, True, False),  # 4. claims trimmed too — a 900-claim document
+        (600, 200, True, True),  # 5. the claim LIST windowed, so prose can exist at all
     )
-    for first_limit, rest_limit, pack in tiers:
+    for first_limit, rest_limit, pack, window in tiers:
         if pack:
             # What the claims and the scaffolding cost with no prose at all. The section
             # budget is whatever is left, so the pack depends only on the document, the
             # question and the tier — never on how a previous tier turned out.
-            empty = _context(doc, secs, _Pack(), first_limit=first_limit, rest_limit=rest_limit)
+            empty = _context(
+                doc,
+                secs,
+                _Pack(),
+                first_limit=first_limit,
+                rest_limit=rest_limit,
+                window_claims=window,
+            )
             budget = max(0, max_chars - len(empty.text) - headings_cost)
             packed = _pack(secs, order, budget)
         else:
             packed = everything
         view = _context(
-            doc, secs, packed, first_limit=first_limit, rest_limit=rest_limit, matched=matched
+            doc,
+            secs,
+            packed,
+            first_limit=first_limit,
+            rest_limit=rest_limit,
+            matched=matched,
+            window_claims=window,
         )
         if len(view.text) <= max_chars:
             return view
@@ -463,7 +609,8 @@ def build_context(
     #    `--- NOT SHOWN IN FULL ---` block on exactly the documents that need it, leaving
     #    ANSWER_SYSTEM rule 2b naming a marker the model had never been given.
     omitted = view.omitted or (UNTITLED_SECTION,)
-    manifest = "\n".join(_manifest(omitted))
+    total = sum(len(sec.blocks) for sec in secs)
+    manifest = "\n".join(_manifest(omitted, total - view.omitted_paragraphs, total))
     room = max(0, max_chars - len(CONTEXT_TAIL) - len(manifest) - 1)
     body = view.text[: len(view.text) - len(manifest)] if view.omitted else view.text
     return ContextView(

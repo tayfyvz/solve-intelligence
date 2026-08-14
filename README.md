@@ -82,7 +82,7 @@ Good luck!
 
 **Both tasks are implemented.** Task 1 is document versioning. Task 2 is Option A: AI-powered
 editing, where the model emits **structured operations** and Python applies them — it never writes
-the document's HTML. **864 tests pass (611 backend, 253 frontend), and none of them needs an API
+the document's HTML. **876 tests pass (619 backend, 257 frontend), and none of them needs an API
 key.**
 
 The rest of this section is the reasoning, because the interesting parts of this submission are
@@ -169,12 +169,21 @@ wrote itself, with no next step in it.
 
 The first fix was not retrieval — it was the budget. 30,000 characters is ~7,500 tokens against a
 model that takes hundreds of thousands, so the cliff was self-inflicted. The answer budget is now
-120,000, and the number was **measured**: at a 106,827-character context the call runs in a median
-2.3 s, *faster* than the same questions at 30,000, where a fragmented context made the model work
-harder and one call hit the node timeout outright. A 37-page patent now goes to the model whole.
+220,000 — deliberately *above* the 200,000-character input ceiling, so **every document this app
+accepts is read whole** and "I did not see all of…" is unreachable; anything bigger gets a clean 413
+first. The number was **measured**: at the ceiling, a 195,464-character context answers in a median
+1.8 s, *faster* than the same questions at 30,000, where a fragmented context made the model work
+harder and one call hit the node timeout outright.
 
-Retrieval is what happens **above** that budget, which the 200,000-character input ceiling makes
-reachable by design. `build_context` ranks the description's paragraphs by word overlap with the
+It is also **cheaper**, which is the opposite of the intuition. The document sits at the front of
+the prompt and is identical on every turn, so the provider's automatic cache hits it — **99.3% of
+the prompt cached from turn 2** — while the old question-scoped context rebuilt its prefix per
+question and thrashed the cache to zero. Sending everything beat being clever on all three axes:
+reliability, latency and cost.
+
+Retrieval is now a **safety net** rather than a path anyone travels — it runs only if the budget is
+lowered, and it stays because a length guarantee with no implementation is not a guarantee.
+`build_context` ranks the description's paragraphs by word overlap with the
 question, packs them to the budget, and renders them in document order — five tiers, evaluated and
 never looped, so the same document and question produce the same context byte for byte. Whatever did
 not fit is **named**, inline and in a warning the user reads, in one of three forms depending on
@@ -328,7 +337,7 @@ acknowledgement concludes we did not look.
 
 ## Testing
 
-**864 tests, and zero of them require an API key.** They target meaningful behaviour rather than a
+**876 tests, and zero of them require an API key.** They target meaningful behaviour rather than a
 coverage number.
 
 - The **parse → render → parse round-trip on both seed patents** is the safety net the whole AI
@@ -353,13 +362,6 @@ now a test that asserts the **shipped call**, which is the assertion that was mi
 
 ## Future work, mapped onto Solve's stack
 
-- **Prompt caching on the Q&A branch — the highest-value item on this list.** Now that a whole
-  patent fits in one call, the document sits at the *front* of the prompt and is identical on
-  every turn of a conversation, which is exactly the shape a cached prefix needs. It was
-  impossible before: the old question-scoped context changed the prefix every turn, so nothing
-  could ever hit. Cached input is roughly 90% cheaper and faster to prefill, so this removes the
-  only real objection to sending the whole document — at zero cost to reliability, because the
-  model still sees every word. The smart optimisation here is caching, not smarter retrieval.
 
 - **SQLite → Postgres on RDS**, with Alembic for migrations
 - **SuperTokens** for auth, scoping documents to users

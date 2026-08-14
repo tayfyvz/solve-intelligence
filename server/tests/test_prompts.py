@@ -299,3 +299,24 @@ def test_the_answer_prompt_names_both_not_shown_markers() -> None:
     assert "paragraphs not shown here" in ANSWER_SYSTEM
     assert "--- NOT SHOWN IN FULL ---" in ANSWER_SYSTEM
     assert "NEVER quote either marker" in ANSWER_SYSTEM
+
+
+def test_the_document_comes_before_the_instruction_in_every_prompt() -> None:
+    """The property that makes prompt caching work, asserted so it cannot be reordered away.
+
+    Measured: with the document at the FRONT of the system message and identical on every
+    turn, 16,128 of 16,243 prompt tokens are served from the provider's automatic cache
+    from turn 2 onward — against a question-scoped context that thrashed it to zero. Moving
+    `{claims}` after the user's question, or interpolating anything question-dependent ahead
+    of it, silently costs that, and no other test would notice.
+    """
+    for template in (ANSWER_SYSTEM, PLAN_SYSTEM, DRAFT_SYSTEM, JUDGE_SYSTEM):
+        # The document-bearing placeholders sit at the END of the system text, which is
+        # itself the FIRST message — so the whole stable part precedes anything per-turn.
+        assert template.rstrip().endswith("{prior_art}")
+        assert "{claims}" in template
+
+    messages = build_answer_messages("what is claim 1?", retrieved(claims_text="DOC"), [])
+    assert messages[0]["role"] == "system"
+    assert "DOC" in messages[0]["content"]
+    assert messages[-1] == {"role": "user", "content": "what is claim 1?"}

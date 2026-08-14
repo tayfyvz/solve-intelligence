@@ -9953,13 +9953,13 @@ for the same reason: **it can only count what a table row declares.** A phase wh
 "harden what exists" still needs somewhere to declare what it added.
 
 **A note on this number versus what `pytest`/`vitest` print.** This section counts **gate rows** —
-specified, named behaviours. The suites report **611 backend and 253 frontend test functions**,
+specified, named behaviours. The suites report **619 backend and 257 frontend test functions**,
 because a single gate row is frequently a `parametrize`/`it.each` covering several cases (one 404
 row over five routes, one exception→status table, one file-validation matrix). The two numbers
-measure different things and are both correct; **340 is the number this document owns**, and 864 is
+measure different things and are both correct; **340 is the number this document owns**, and 876 is
 the number the runners own. *(708 → 784: **+76** regression tests added by the QA hardening pass,
 one or more for each defect it found. That pass added no gate rows, so the 340 is unchanged.
-784 → 864: **+80** for the long-patent work — §34 — for the same reason and with the same
+784 → 876: **+92** for the long-patent work — §34 — for the same reason and with the same
 consequence for the 340.)* *(325 → 329: **+3** for the bullet-defined gate tests the extraction missed, and **+1**
 for **`G19`**, the test of `recursion_limit` and its `GraphRecursionError` copy — a bound §3.4
 presented as one of three independently sufficient mechanisms, with a user-facing sentence, that
@@ -10101,7 +10101,7 @@ already-identified bug ship.
 
 Added after the QA hardening pass, on a brief measured against a real 37-page application
 (112,659 characters, 60 claims, 89 description paragraphs) rather than against the two
-two-screen seeds. **+80 tests (784 → 864: 611 backend, 253 frontend).** No gate rows: this
+two-screen seeds. **+92 tests (784 → 876: 619 backend, 257 frontend).** No gate rows: this
 section is the declaration, in the same spirit as §31.2's note about the hardening pass.
 
 ### 34.1 What was wrong
@@ -10170,3 +10170,78 @@ byte-identical to what a save stores. Every judgement is a `note` shown before t
 exists; numbering is reported, never repaired. `contextFile.ts` became `textFile.ts` and
 takes its size limit as a parameter, because import is bounded by the **save** cap and chat
 context by the **AI** cap.
+
+### 34.6 The four gaps, closed
+
+Shipped with the section above knowingly incomplete; this closes it. Each was honest — the
+user was told — but "we told you" is not the same as "it works".
+
+| Gap | Fix | Test |
+|---|---|---|
+| **Vocabulary mismatch.** "volumes" scored zero against a patent that says "volume" | `stem()`: one English inflection folded off both sides, **including a trailing `e`** — without which "volumes"→"volume" and "volume"→"volume" still miss each other and the whole exercise buys nothing. `STOPWORDS` is stemmed too, or "please" survives as "pleas" and scores as a content word | L22 |
+| **900-claim documents.** No tier let the claims yield to prose, so the description was unreachable at every tier | a 5th tier that **windows the claim list** — first 10 + last 10 with a marker, the same shape `build_outline` already uses. The ends carry the independent claims and the newest ones | L23 |
+| **Counting questions.** Guarded by a prompt rule alone; a model counting what is in front of it does not experience that as guessing | the manifest states **both numbers** — "You were shown 25 of this document's 90 description paragraphs" — so an honest answer is available rather than merely demanded | L24, L25 |
+| **Find missed matches across formatting.** "bio**compatible**" is three text nodes | `flatten()` records a document position **per character**, so a block is searched as a reader reads it while staying exact across a `<br>` — which the obvious `textContent` fix would misalign by one | N2 |
+
+**Synonymy is still not solved and cannot be**, by stemming or by anything else lexical:
+"fill volume" against a document that says "priming volume" scores nothing. That case is
+*detected* (`ContextView.matched`) and the user is told to quote a phrase — which is the one
+instruction that always works against a lexical score. Stemming further, with a real Porter
+implementation, would begin folding distinct patent terms together, and in a legal document
+a false match is worse than a miss.
+
+### 34.7 Prompt caching — measured, and already working
+
+Named as future work, then measured and found to be **already delivered by the budget
+change**, which is worth recording because the reasoning is not obvious.
+
+| answer budget | turn 1 | turn 2 | turn 3 |
+|---|---|---|---|
+| 120,000 (whole document) | 0 / 16,244 (cold) | **16,128 / 16,243** | **16,128 / 16,243** |
+| 30,000 (question-scoped) | 3,712 / 5,332 | **0** / 5,135 | 1,664 / 5,275 |
+
+The provider caches automatically above ~1,024 tokens, and the document sits at the FRONT of
+the system message, byte-identical every turn — exactly the shape a cached prefix needs. The
+old context was rebuilt per question, so the prefix moved and the cache thrashed. Cached
+input bills at a fraction of fresh input, so **from turn 2 the 120,000-char prompt costs less
+than the 30,000-char one it replaced**: sending everything beat being clever on reliability,
+latency *and* cost. A test asserts the message ordering, because reordering it would destroy
+this silently and nothing else would notice.
+
+### 34.8 The budget again: send everything the app accepts
+
+§34.2 sized the answer budget as "the largest real document" (120,000) so that retrieval
+stayed exercised. On a 196,395-character patent — under the 200,000 input ceiling, so a
+document the app *accepts* — that still produced *"I did not see all of: BRIEF DESCRIPTION
+OF THE DRAWINGS, DETAILED DESCRIPTION"*. Honest, and still the wrong answer: if a document
+is small enough to be accepted, it is small enough to be read.
+
+**`max_answer_context_chars` is now 220,000, deliberately ABOVE `max_html_chars`.** Context
+renders at ~1.0-1.05x the source HTML, so the ceiling document fits with room. Measured at
+that ceiling: 195,464 chars of context, `sections_omitted=0`, 29,801 input tokens, **4.0 s**
+— against 2 sections omitted and a 7.2 s max at 120,000. Faster, again.
+
+The warning is therefore **unreachable in production**. Retrieval below the budget is a
+safety net: still tested (L2, L16-L23), still what makes tier 5's length guarantee true, and
+kept because a guarantee with no implementation is not a guarantee.
+
+### 34.9 An audit of the §34.6 fixes, and what it found
+
+The four gap-closures were themselves audited adversarially. Two of them were wrong.
+
+| # | Severity | Defect | Fix |
+|---|---|---|---|
+| 1 | **HIGH, a regression** | `STOPWORDS` was stemmed and subtracted AFTER stemming, so any content word whose stem collided with a stopword's was deleted from the question: **"shoulder" → "should"**. A question about the shoulder of a housing came back "none of the words in your question appear in this document" | `content_tokens()`: subtract raw stopwords BEFORE stemming |
+| 2 | **HIGH** | `-er`/`-ers`/`-ly`/`-est` caused a false merge AND a miss at once: "prime"/"primer" merged, while "filters"→"filt" split from "filtering"→"filter" | dropped them; `ies`/`ied` now falls through to the trailing-`e` rule, whose floor moved to 3 so "gases" reaches "gas" |
+| 3 | MEDIUM | `flatten()` lowercased the whole block AFTER building the position list. `İ` (U+0130) lowercases to TWO code units, so the arrays desynchronised and the end position read past the array as `NaN` — which draws no highlight and throws nothing | lowercase per character, one position per OUTPUT unit |
+| 4 | MEDIUM | a claims-only document was told *"You were shown 0 of this document's 0 description paragraphs"*, inviting the model to call it empty while holding twenty claims | emit the count only when there is a description |
+| 5 | LOW | the claim window was labelled by the numbers at its edges, so duplicates gave "claims 3-3" and 21 claims gave "claims 11-11" | label by COUNT, which is true whatever the numbering does |
+| 6 | LOW | the tier-5 length guarantee is stated as absolute but breaks below a few hundred `max_chars`, where the manifest alone exceeds the budget | docstring states the proviso; unreachable from `Settings` |
+
+Confirmed sound by the same audit: the tier ladder cannot fire tier 5 on a realistic
+document, `_pack`'s budget derivation is genuinely tier-independent, `SCAFFOLD_RE` still
+matches the new claims marker, and nothing anywhere depends on unstemmed tokens.
+
+**A stem is a sort key.** It never reaches the model, the document or a citation, so a
+wrong fold costs relevance and can never cost correctness — L22 asserts the folded form is
+never emitted as a word.

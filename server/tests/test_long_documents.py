@@ -12,6 +12,8 @@ inject a fake answerer.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from app.ai.document import parse
@@ -23,7 +25,9 @@ from app.ai.outline import (
     STOPWORDS,
     UNTITLED_SECTION,
     build_context,
+    content_tokens,
     sections,
+    stem,
     tokens,
 )
 from app.ai.schemas import Answer, Citation
@@ -431,3 +435,159 @@ def test_L21_a_document_with_no_headings_gets_followable_advice() -> None:
     assert warning == W_PARTIAL_NO_HEADINGS
     assert "Quote a phrase" in warning
     assert "by name" not in warning  # the advice that cannot be followed here
+
+
+# --------------------------------------------------- closing the last four gaps
+
+
+def test_L22_inflections_of_the_same_word_match() -> None:
+    """L22 — the vocabulary gap, narrowed. A user asking about "volumes" and a patent
+    that says "volume" were scoring zero against each other, which is the same silent
+    miss as a true synonym but with none of its excuse.
+
+    What this deliberately does NOT do is synonymy: "fill volume" against a document that
+    says "priming volume" still scores nothing, and no lexical scheme fixes that — L18 is
+    the mechanism that tells the user instead.
+    """
+    for a, b in [
+        ("volumes", "volume"),
+        ("oxygenating", "oxygenate"),
+        ("membranes", "membrane"),
+        ("bodies", "body"),
+        ("describes", "described"),
+        # Sibilant plurals: the plain -s rule alone gives "gase", which misses the
+        # commonest noun in this domain entirely.
+        ("gases", "gas"),
+        ("lenses", "lens"),
+        ("boxes", "box"),
+        ("processes", "process"),
+    ]:
+        assert tokens(a) == tokens(b), f"{a} should fold onto {b}"
+
+    # Short words must survive intact, or "gas" becomes "ga" and matches nothing real.
+    for word in ["gas", "less", "class", "the", "its"]:
+        assert tokens(word) == {word}
+
+    # SCORING ONLY. A stem never reaches the model, the document or a citation — it is a
+    # sort key. So a false merge ("coating"/"coat") costs relevance and can never cost
+    # correctness: the model still sees verbatim document text, and `check_citations`
+    # still verifies quotes against the real document.
+    view = ask("what is the priming volume?")
+    # Word-boundary, because "volum" is of course a SUBSTRING of the real word: the claim
+    # is that the folded form is never emitted as a word of its own.
+    assert re.search(r"\bvolum\b", view.text) is None
+    assert re.search(r"\bpriming\b", view.text) is not None
+
+    # And it works end to end: the question says "volumes", the document says "volume".
+    html = (
+        "<h1>BACKGROUND</h1>"
+        + "".join(f"<p>{FILLER} ({i})</p>" for i in range(60))
+        + f"<p>{FILLER} The priming volume is 220 millilitres.</p>"
+        + "<h1>Claims</h1><p>1. A device.</p><p>2. Another.</p>"
+    )
+    view = build_context(
+        parse(html), tokens("what are the priming volumes?") - STOPWORDS, max_chars=TIGHT
+    )
+    assert "220 millilitres" in view.text
+    assert view.matched is True
+
+
+def test_L23_a_claim_heavy_document_can_still_answer_about_its_description() -> None:
+    """L23 (audit finding 7) — there was no tier in which the claims yielded to prose, so
+    on a 900-claim document every section was omitted and a question about the Background
+    was answered from 289 claims and nothing else. Tier 5 windows the claim LIST.
+    """
+    html = (
+        "<h1>BACKGROUND</h1>"
+        + "".join(f"<p>The priming volume matters here {i}. {'pad ' * 50}</p>" for i in range(40))
+        + "<h1>Claims</h1>"
+        + "".join(f"<p>{n}. {'z' * 90}</p>" for n in range(1, 901))
+    )
+    view = build_context(
+        parse(html),
+        tokens("what does the background say about priming volume?") - STOPWORDS,
+        max_chars=TIGHT,
+    )
+
+    assert len(view.text) <= TIGHT
+    assert "## BACKGROUND" in view.text  # the description is reachable at all
+    assert "priming volume matters" in view.text
+    # The claim list was cut, and cut VISIBLY — same shape as `build_outline`'s window.
+    assert "not shown here" in view.text
+    # Labelled by COUNT, not by the numbers at the window edges: the parser records claim
+    # numbers verbatim, so edge labels read "claims 3-3" on a document with duplicates.
+    assert any("claims in the middle of the claim list" in label for label in view.omitted)
+    # The ends of the claim set survive: claim 1 is independent, and the tail is where
+    # recently added claims live.
+    assert "[1] " in view.text and "[900] " in view.text
+
+
+def test_L24_the_manifest_carries_both_counts() -> None:
+    """L24 (audit finding 6) — a model asked "how many embodiments are described?" counts
+    what is in front of it and does not experience that as guessing. Given both totals it
+    can answer honestly instead, so the numbers are stated rather than left to a prompt
+    rule alone."""
+    view = ask("what is the priming volume?")
+    total = sum(len(s.blocks) for s in sections(parse(long_patent())))
+    shown = total - view.omitted_paragraphs
+    assert f"You were shown {shown} of this document's {total} description paragraphs." in view.text
+    assert 0 < shown < total  # a real partial read, not a degenerate one
+
+
+def test_L25_the_manifest_is_absent_when_the_whole_document_was_read() -> None:
+    """The counts must not appear on the common path: a document read in full has nothing
+    to report, and a sentence about limits under every answer is one nobody reads."""
+    view = ask("what is the priming volume?", max_chars=200_000)
+    assert view.omitted == ()
+    assert "--- NOT SHOWN IN FULL ---" not in view.text
+    assert "You were shown" not in view.text
+
+
+def test_L26_a_content_word_is_never_eaten_by_a_stopword_stem() -> None:
+    """L26 — a regression the stemming fix introduced and an audit caught.
+
+    `tokens(q) - STOPWORDS` stems BEFORE subtracting, so any content word whose stem
+    collides with a stopword's is deleted from the question outright: "shoulder" folds to
+    "should". A question about the shoulder of a housing came back "none of the words in
+    your question appear in this document" with the word sitting right there.
+    """
+    for word in ["shoulder", "theme", "wither", "thane", "theirs", "willing"]:
+        assert content_tokens(word) == {stem(word)}, f"{word} must survive stopword removal"
+
+    # The stopwords themselves still go, or every question is mostly noise.
+    assert content_tokens("what is the shoulder of the housing?") == {
+        stem("shoulder"),
+        stem("housing"),
+    }
+
+
+def test_L27_the_stemmer_neither_splits_nor_falsely_merges_patent_terms() -> None:
+    """L27 — `-er`/`-ly`/`-est` were tried and removed. One suffix family managed to cause
+    a false match AND a miss at the same time, which is the worst of both."""
+    # It must FOLD these — the same word in different grammatical clothes.
+    for group in [
+        ("filter", "filters", "filtering", "filtered"),
+        ("assembly", "assemblies"),
+        ("supply", "supplies"),
+        ("gas", "gases"),
+        ("volume", "volumes"),
+    ]:
+        stems = {stem(w) for w in group}
+        assert len(stems) == 1, f"{group} should share one stem, got {stems}"
+
+    # And it must KEEP THESE APART. A PCR primer is not priming, and in a legal document a
+    # false match costs more than a miss.
+    for a, b in [("prime", "primer"), ("number", "numb"), ("base", "basis"), ("less", "lesser")]:
+        assert stem(a) != stem(b), f"{a} and {b} must not merge"
+
+
+def test_L28_a_claims_only_document_is_not_told_it_has_zero_paragraphs() -> None:
+    """L28 — "You were shown 0 of this document's 0 description paragraphs" invites the
+    model to call the document empty while it is holding twenty claims. A `.txt` import of
+    a bare claim set is exactly this shape."""
+    html = "<h1>Claims</h1>" + "".join(f"<p>{i}. {'x' * 700}</p>" for i in range(1, 60))
+    view = build_context(parse(html), max_chars=4_000)
+    assert view.omitted  # something was cut, so the manifest is present
+    assert "--- NOT SHOWN IN FULL ---" in view.text
+    assert "0 of this document's 0" not in view.text
+    assert "description paragraphs" not in view.text

@@ -24,7 +24,7 @@ from typing import Protocol
 from app.ai import prompts
 from app.ai import verify as vf
 from app.ai.document import REF_RE, Claim, ParsedDocument, block_text
-from app.ai.outline import STOPWORDS, build_context, claims_excerpt, tokens
+from app.ai.outline import build_context, claims_excerpt, content_tokens, tokens
 from app.ai.prompts import Selection, render_critique
 from app.ai.schemas import (
     Answer,
@@ -274,10 +274,14 @@ def _understand(llm: LlmBundle, state: dict) -> dict:
 
 # --------------------------------------------------------------------------- retrieve
 
-# `STOPWORDS` and `tokens` moved to `outline.py`, which needs them to rank sections
-# against the question and may not import this module. They are imported above rather
-# than duplicated, so `nodes.tokens` still resolves for every existing caller and there
-# is still exactly one word list.
+# The word list and the two tokenisers live in `outline.py`, which needs them to rank
+# sections against the question and may not import this module (nodes imports outline).
+# They are imported above rather than duplicated, so there is exactly one of each.
+#
+# `content_tokens(q)`, never `tokens(q) - STOPWORDS`. The order is load-bearing: stemming
+# first and subtracting after deletes any content word whose STEM collides with a
+# stopword's — "shoulder" folds to "should" — so a question about the shoulder of a housing
+# was answered "none of the words in your question appear in this document".
 
 
 def is_dependent(claim: Claim) -> bool:
@@ -359,7 +363,7 @@ def _retrieve(state: dict) -> dict:
     picked |= {c.number for c in doc.claims if not is_dependent(c)}
     # 4. Top-3 by lexical overlap, if fewer than 4 claims are picked so far.
     if len(picked) < 4:
-        picked |= top_k_by_overlap(doc, tokens(instr) - STOPWORDS, k=3)
+        picked |= top_k_by_overlap(doc, content_tokens(instr), k=3)
     numbers = {c.number for c in doc.claims}
     picked = {n for n in picked if n is not None and n in numbers}
 
@@ -383,7 +387,7 @@ def _retrieve(state: dict) -> dict:
     #    silence. The names come back out as a warning, in `_verify`.
     if u.intent == "answer":
         view = build_context(
-            doc, tokens(instr) - STOPWORDS, max_chars=settings.max_answer_context_chars
+            doc, content_tokens(instr), max_chars=settings.max_answer_context_chars
         )
         claims_text, omitted = view.text, list(view.omitted)
         matched, headed = view.matched, view.headed

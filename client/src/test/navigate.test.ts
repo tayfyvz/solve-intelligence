@@ -100,12 +100,43 @@ describe("N2 findMatches", () => {
     expect(matches).toHaveLength(25);
   });
 
-  it("does not match across a formatting boundary, and that is the documented trade", () => {
-    // "biocompatible material" split by <strong> is three text nodes. Searching a whole
-    // block's textContent would find it and then be off by one for every <br> in the
-    // block — highlighting the wrong span is worse than finding fewer of the right ones.
+  it("matches ACROSS a formatting boundary, exactly as a reader sees it", () => {
+    // "biocompatible" split by <strong> is three text nodes. The per-text-node version
+    // could not find it at all; searching `textContent` would find it and then be off by
+    // one for every <br> in the block.
     const doc = docOf("<p>a <strong>bio</strong>compatible material</p>");
-    expect(findMatches(doc, "biocompatible")).toEqual([]);
-    expect(findMatches(doc, "compatible material")).toHaveLength(1);
+    const [match] = findMatches(doc, "biocompatible");
+    expect(match).toBeTruthy();
+    expect(doc.textBetween(match.from, match.to)).toBe("biocompatible");
+  });
+
+  it("stays exact when a hard break sits inside the match", () => {
+    // THE case that makes character-wise positions load-bearing: <br> occupies a document
+    // position and contributes no character, so `from + length` would overshoot the end.
+    const doc = docOf("<p>gas<br>permeable membrane</p>");
+    const [match] = findMatches(doc, "permeable membrane");
+    expect(doc.textBetween(match.from, match.to)).toBe("permeable membrane");
+  });
+
+  it("does not match across a PARAGRAPH boundary, which has no contiguous range", () => {
+    const doc = docOf("<p>the gas</p><p>permeable membrane</p>");
+    expect(findMatches(doc, "gas permeable")).toEqual([]);
+  });
+
+  it("stays exact when lowercasing LENGTHENS a character", () => {
+    // "İ" (U+0130) lowercases to two code units. Lowercasing the block after building the
+    // position list leaves the two out of step: every later match is off by one and its
+    // end position reads past the array as NaN, which draws no highlight and says nothing.
+    const doc = docOf("<p>Aİ B membrane</p>");
+    const [match] = findMatches(doc, "membrane");
+    expect(match).toBeTruthy();
+    expect(Number.isFinite(match.to)).toBe(true);
+    expect(doc.textBetween(match.from, match.to)).toBe("membrane");
+  });
+
+  it("finds text inside a list item", () => {
+    const doc = docOf("<ul><li><p>a biocompatible substrate</p></li></ul>");
+    const [match] = findMatches(doc, "biocompatible");
+    expect(doc.textBetween(match.from, match.to)).toBe("biocompatible");
   });
 });

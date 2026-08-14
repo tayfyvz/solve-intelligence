@@ -129,22 +129,47 @@ Confirmed by running the real libraries — do not re-derive or assume otherwise
   `insert_section` request carrying prior-art text). The five-call worst case at the observed max
   is ~33 s. `reasoning_effort="low"` is accepted **on its own** — but see the mutual-exclusion row
   above before setting it; it is shipped as `None`.
-- **A WHOLE 37-page patent in one `answer` call is FASTER than a packed 30,000-char context.**
-  Measured 2026-08-14 over the real 107,512-character imported patent, real schemas, real key:
+- **A WHOLE patent in one `answer` call is FASTER than any packed context, at every size
+  tried.** Measured 2026-08-14, real schemas, real key, on the two real documents:
 
-  | answer budget | context sent | latency |
-  |---|---|---|
-  | 30,000 | 30,000, fragmented | median 6.3 s, max 9.3 s, **one call hit the 12 s node timeout** |
-  | 120,000 | 106,827 = the whole document | **median 2.3 s, min 1.6 s, max 3.5 s** (n=6) |
+  | document | answer budget | context sent | latency |
+  |---|---|---|---|
+  | 107,512 chars | 30,000 | 30,000, fragmented | median 6.3 s, max 9.3 s, **one call hit the 12 s node timeout** |
+  | 107,512 chars | 120,000 | 106,827 = whole | median 2.3 s, max 3.5 s (n=6) |
+  | 196,395 chars | 120,000 | 119,272, 2 sections omitted | median 2.8 s, max 7.2 s |
+  | 196,395 chars | 220,000 | 195,464 = whole | **median 1.8 s, max 3.9 s** (n=5) |
 
-  Bigger is faster, which is not the intuition and is why this is measured rather than
-  reasoned about: a context full of elision markers and a "not shown" manifest makes the
-  model work harder than the document itself does. `max_answer_context_chars` is therefore
-  **120,000** — "the largest real document", not "the largest the window permits". Live end
-  to end: `claims_chars=106827 sections_omitted=0 warnings=0`, 17,601 input tokens, 6.2 s.
-  **`ai_node_timeout_seconds` is unchanged at 12.0**, because the measured max at the new
-  budget is 3.5 s; do not raise it without re-deriving PLAN §3.4's whole timeout chain,
+  Bigger is faster every time, which is not the intuition and is why this is measured
+  rather than reasoned about: a context full of elision markers and a "not shown" manifest
+  makes the model work harder than the document itself does.
+
+  **`max_answer_context_chars` is therefore 220,000 — deliberately ABOVE `max_html_chars`
+  (200,000).** Context renders at ~1.0-1.05x the source HTML, so every document this app
+  will accept at all is read WHOLE and the "I did not see all of…" warning is unreachable
+  in production. Anything bigger is refused by the 413 before it reaches the model. Live:
+  `claims_chars=195464 sections_omitted=0 warnings=0`, 29,801 input tokens, 4.0 s.
+  Retrieval below the budget is a SAFETY NET, not the normal path — it is still tested
+  (L2, L16-L23) and it is still what makes tier 5's length guarantee true.
+  **`ai_node_timeout_seconds` is unchanged at 12.0**, because the measured max at the
+  ceiling is 3.9 s; do not raise it without re-deriving PLAN §3.4's whole timeout chain,
   which is calibrated as 5 × 12 < 65 < 75.
+- **The whole-document prefix is CACHED, and the old question-scoped one was not.** Measured
+  2026-08-14 on the same 107,512-character patent, three consecutive questions each
+  (`usage.prompt_tokens_details.cached_tokens`):
+
+  | answer budget | turn 1 | turn 2 | turn 3 |
+  |---|---|---|---|
+  | 120,000 (whole document) | 0 / 16,244 (cold) | **16,128 / 16,243** | **16,128 / 16,243** |
+  | 30,000 (question-scoped) | 3,712 / 5,332 | **0** / 5,135 | 1,664 / 5,275 |
+
+  99.3% cached from turn 2, with no code: OpenAI caches automatically above ~1,024 tokens,
+  and the document sits at the FRONT of the system message where a cached prefix needs it.
+  The old context was rebuilt per question, so the prefix moved and the cache thrashed.
+  **This is why whole-document context is also the cheaper option in a conversation** —
+  cached input bills at a fraction of fresh input, so from turn 2 the 120,000-char prompt
+  costs less than the 30,000-char one it replaced. Do not reorder the system message to put
+  the instruction or the question before the document: that is the one change that would
+  silently destroy this.
 - **`@tiptap/core` 2.27.1.** `setContent(content, emitUpdate?, parseOptions?, options?)` is
   **positional**. Use `setContent(html, true)` so `onUpdate` fires — dropping that `true` is the
   highest-severity one-character bug in this feature. *(An earlier version recommended enabling
