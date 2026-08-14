@@ -53,9 +53,9 @@ onward is Task 2 and is not yet built.
 | 24 | **5A** `.txt` validation and the drop zone | to build |
 | 25 | **5B** Selection capture, claim resolution, highlight | to build |
 | 26 | **5C** The chat panel — **Option A demoable** | to build |
-| 27 | **6** Hardening and stress pass | to build |
-| 28 | Production readiness | to build |
-| 29 | **7** Documentation and submission | to build |
+| 27 | **6** Hardening and stress pass | ✅ shipped |
+| 28 | Production readiness | ✅ shipped |
+| 29 | **7** Documentation and submission | ✅ shipped |
 | 30 | Risk register and the riskiest assumption | — |
 | 31 | Consolidated test inventory | — |
 | 32 | Never cut | — |
@@ -9649,15 +9649,15 @@ deliverable; a checklist that claims them would be worse than no checklist.
       `nginx.conf` carrying `client_max_body_size 2m` and the SPA fallback, and the **build-time
       `VITE_API_URL`** caveat spelled out (§28.2.2, §28.2.4). Ship the dev CMD as the compose
       override, same pattern as the server.
-- [ ] **`.env.example`** gains the commented `LANGSMITH_TRACING` / `LANGCHAIN_TRACING_V2` warnings
+- [x] **`.env.example`** — DONE (0D, verified at 7C). Carries the commented `LANGSMITH_TRACING` / `LANGCHAIN_TRACING_V2` warnings
       (§28.2.8) — part of 0D's commit.
-- [ ] Client `aiHttp` timeout **stays at `90_000`** — 4Z's measurement retired the planned raise to
+- [x] Client `aiHttp` timeout — DONE (4D, verified at 7C). Stays at `90_000` — 4Z's measurement retired the planned raise to
       `100_000` (§3.4, §20.7) — and its stale `"> the server's 60 s"` comment is rewritten to name
       `ai_request_timeout_seconds = 75.0`. The graph deadline (`65.0`) is wired (§3.4).
 - [x] `*.tsbuildinfo` added to `client/.gitignore`; no stray files remain — DONE (6D).
-- [ ] **`CLAUDE.md` invariant 8 amended** in the same commit that introduces `versionSource`
+- [x] **`CLAUDE.md` invariant 8 amended** — DONE (5C, verified at 7C). Shipped in the same commit that introduced `versionSource`
       (§33.2).
-- [ ] A **"Production readiness"** section in `README.md` reproducing §28.2 and §28.3 in substance —
+- [x] A **"Production readiness"** section in `README.md` — DONE (7B), reproducing §28.2 and §28.3 in substance —
       **the honesty is the deliverable.**
 
 **(b) Explicitly NOT built — documented as such, with the named fix:**
