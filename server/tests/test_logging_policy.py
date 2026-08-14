@@ -38,6 +38,20 @@ HTML = (
 )
 
 
+@pytest.fixture
+def dummy_key(ai_settings):
+    """A syntactically valid but fake key, so `ai_enabled` is True for L10.
+
+    The same guard `test_ai_routes.py` applies, and for the same reason: without it this
+    file passes on a machine with a real key in `.env` and FAILS on a clean clone, where
+    the shipped `sk-XXXXXXXX` placeholder makes `/chat` return 503 before it ever reaches
+    the graph — so no `ai.request` line is emitted and the assertions have nothing to
+    find. A test whose result depends on a developer's local `.env` is testing the
+    environment, not the code. Nothing here reaches the network: the runner is overridden.
+    """
+    ai_settings(openai_api_key="sk-test-not-a-real-key-0123456789")
+
+
 def _logged(caplog: pytest.LogCaptureFixture) -> str:
     """Everything a handler would emit: the rendered message AND any traceback text."""
     return "\n".join(
@@ -141,7 +155,9 @@ def test_l9_the_generative_and_answer_paths_log_no_document_or_prose(caplog) -> 
         assert expected in logged, f"{expected} never logged — this test would pass vacuously"
 
 
-def test_l10_the_route_lines_carry_the_req_and_no_payload(client, fake_runner, caplog) -> None:
+def test_l10_the_route_lines_carry_the_req_and_no_payload(
+    client, fake_runner, dummy_key, caplog
+) -> None:
     """L10 — `ai.request` and `ai.done` at the HTTP boundary, and the `req=` thread.
 
     The entry line is the one that sees the whole request at once: document, instruction,
