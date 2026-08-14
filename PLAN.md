@@ -9304,6 +9304,18 @@ Continuing the numbering of §22.13 / §23.11 / §24.3 / §25.7 / §26.12 (rows 
 |---|---|---|---|---|
 | 33 | 6A | §28.2.6 item 2 / §28.4(a): add a config test asserting `create_db_engine("postgresql+psycopg://u@h/d")` builds an engine with **no** `check_same_thread`, "buildable without a running Postgres — engine construction is lazy; only `.connect()` dials out". | **The prescribed test does not run.** Laziness is about *dialing out*, not about *importing the driver*: `create_engine` resolves the dialect and imports its DBAPI eagerly, so the call raises `ModuleNotFoundError: No module named 'psycopg'` before reaching any of our code. `psycopg` is not a dependency and adding a driver we never use — to the production image — to run one test is the wrong trade. | The **fix to `db.py` is unchanged** and shipped exactly as §28.2.6 specifies. The test captures the kwargs at the `create_engine` seam (`monkeypatch.setattr(db, "create_engine", spy)`) and asserts the postgres URL yields `{}` while `sqlite://` yields `connect_args` + `StaticPool`. That is the claim itself — *we pass no sqlite-only arguments for a non-sqlite URL* — asserted against the real `create_db_engine`. Verified red by hoisting `connect_args` back out of the guard. |
 | 34 | 6A | §28.2.5 names the logging rule but §28.4(a) lists no assertion for the **error middleware**, only `L7` for `llm.py`. | `main.py` shipped `logger.exception(...)`, which renders the traceback — whose final line is `str(exc)`. §28.2.5 explicitly forbids exactly that ("do not log `str(exc)` for anything that has been near the document") yet nothing tested it. | Middleware changed to `logger.error("http.unhandled type=%s method=%s path=%s", ...)`, plus `test_the_unhandled_error_log_line_carries_no_exception_message` asserting a secret in the exception message never reaches `caplog` while the **type** does. Verified red by restoring `logger.exception`. |
+| 35 | 6B | §28.2.5's `understand` line specifies `confidence=%.2f`. | `Understanding.confidence` is `Literal["high", "medium", "low"]` — a string. `%.2f` raises `TypeError` inside the logging call, which the stdlib swallows to stderr, so the line would have been silently lost in production. | Logged as a plain value. The field is an enum, which is what §28.2.5's own preamble says to log ("enum values"); only the format specifier was wrong. |
+| 36 | 6B | §28.2.5's `ai.llm_error` line specifies `req=%s node=%s type=%s status=%s`. | The two halves are never available together. `LlmUnavailable` is *our* type, carries no HTTP status, and is caught in `node_guard` where the **node** is known; the `openai` exceptions carry the status but propagate past every node to `_upstream_error`, where the node is **not** known. One line with all four fields cannot be written from either place without inventing a value. | Split, honestly: `node_guard` logs `ai.llm_error req=… node=… type=…` (no status — there is none), and `_upstream_error` logs `ai.llm_error req=… node=- type=… status=…`. Both remain greppable as `ai.llm_error`, and `node=-` says "this one did not stop at a node" rather than implying it did. |
+| 37 | 6B | §28.2.5 threads `req=%s` onto the `/apply` line, to "correlate a `/chat` call to the `/apply` call that followed it". | `/apply` is handed an `AiProposal` and nothing else, and `AiProposal` is a **frozen wire contract** guarded by `test_client_contract.py` — carrying `req` across would mean a new field on the wire, in `types.ts`, and in the contract regexes, purely for a log line. | The correlation runs through the id the proposal **already** carries: `ai.done` logs `proposal=%s`, and `ai.apply` logs the same `proposal=%s`. Same join, no wire change. `/apply` mints no `req` because it has no graph to thread one into. |
+
+**Also added at 6B, and not in the plan:** `tests/test_logging_policy.py` (**L8–L10**) — a real
+`run_plan` and a real `POST /api/ai/chat` over a document, instruction, prior-art file and model
+response each carrying a distinct greppable secret, asserting none of them reaches `caplog` while
+the node and route lines *are* emitted. §28.4(a) named `L7` (which covers `llm.py`'s branches only)
+as the sole assertion for a rule that spans nine call sites in three modules. Verified red four
+ways: re-adding `reason=u.reason` to the understand line (the leak that actually shipped in 4C),
+logging `ans.text` on `answer`, logging the instruction on the route entry line, and dropping
+`req=req` from the `GraphInput` the route builds.
 
 ---
 
@@ -9615,7 +9627,7 @@ deliverable; a checklist that claims them would be worse than no checklist.
       `DESIGN.md:469` is false.**
 - [x] **`main.py`** — DONE (6A). `allow_credentials=False`; `allow_methods=["GET","POST","PUT","DELETE"]`;
       `allow_headers=["Content-Type"]` (§28.2.3). Error middleware stays registered first.
-- [ ] **Logging policy implemented** in `llm.py` / `graph.py` / `routers/ai.py`: the per-node `INFO`
+- [x] **Logging policy implemented** — DONE (6B), in `llm.py` / `graph.py` / `nodes.py` / `routers/ai.py`: the per-node `INFO`
       lines of §28.2.5 with counts, kinds and truncated hashes; **no document text, no instruction,
       no prompt, no response body, no file contents, no key**; `openai_api_key` retyped as
       `SecretStr` per §23.1, with `ai_enabled` reading it through `.get_secret_value()`; a `req=`

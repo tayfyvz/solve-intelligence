@@ -84,6 +84,10 @@ class State(TypedDict, total=False):
     selection: Selection | None
     history: list[Turn]
     started_at: float  # time.monotonic() — the deadline check reads this
+    req: str  # per-request UUID4 hex, minted in the route. The ONLY thing that
+    # correlates a /chat log line to the /apply that followed it, and
+    # it costs one field (PLAN §28.2.5). Not a tracing system: no
+    # spans, no propagation to the OpenAI call, no sampling.
 
     pending_question: str | None  # the clarifying question we asked last turn, or None
     clarify_count: int  # consecutive clarifications, floored+clamped by the route
@@ -118,6 +122,11 @@ class State(TypedDict, total=False):
     operations: list[Op]
     status: Literal["edit", "answer", "clarification", "no_change", "error"]
     message: str
+
+    llm_calls: int  # incremented where a wrapper is ACTUALLY called, never in the
+    # guard: judge returns early on an empty plan and the deadline
+    # branch returns without calling, so guard-counting would overstate
+    # the bill on exactly the paths worth trusting the number on.
 
     # ---- written by any node's guard when it catches LlmUnavailable ---------
     error: str | None
@@ -277,6 +286,7 @@ class GraphInput:
     history: list[Turn] = field(default_factory=list)  # already truncated by the route
     pending_question: str | None = None  # the clarifying question we asked last turn
     clarify_count: int = 0  # already clamped by the route
+    req: str = ""  # per-request correlation id; "" in tests that do not care
 
 
 @dataclass(frozen=True)
@@ -287,6 +297,7 @@ class GraphResult:
     warnings: list[str]
     citations: list[int]  # claim numbers, [] unless status == "answer"
     options: list[str]  # [] unless status == "clarification"
+    llm_calls: int = 0  # what this run actually spent, for the terminal log line
 
 
 AiRunner = Callable[[GraphInput], GraphResult]
@@ -307,7 +318,9 @@ def _initial_state(gi: GraphInput, doc: ParsedDocument) -> State:
         "pending_question": gi.pending_question,
         "clarify_count": gi.clarify_count,
         "attempts": 0,
+        "llm_calls": 0,
         "started_at": time.monotonic(),
+        "req": gi.req,
     }
 
 
@@ -358,6 +371,7 @@ def run_plan(gi: GraphInput, llm: LlmBundle) -> GraphResult:
         operations=terminal.get("operations", []),
         warnings=terminal.get("warnings", []),
         citations=terminal.get("citations", []),
+        llm_calls=terminal.get("llm_calls", 0),
         options=terminal.get("options", []),
     )
 

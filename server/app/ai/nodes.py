@@ -110,6 +110,27 @@ class LlmBundle:
     answer: Callable[[str, Retrieved, list[Turn]], Answer]
 
 
+# --------------------------------------------------------------------- node logging
+
+
+def _node_log(name: str, state: dict, started: float, **fields: object) -> None:
+    """One INFO line per node, keyword-shaped so a later grep is one command.
+
+    THE RULE (PLAN §28.2.5), enforced by what this function is only ever passed:
+    counts, lengths, kinds, enum values and truncated hashes. Never the document,
+    never the instruction, never the prompt, never the model's prose — including
+    the model's own `reason` and `restatement`, which quote the text they describe.
+    There is no debug flag that widens this; a flag that can be set will be set.
+    """
+    logger.info(
+        "ai.node=%s req=%s %s ms=%d",
+        name,
+        state.get("req") or "-",
+        " ".join(f"{k}={v}" for k, v in fields.items()),
+        (time.monotonic() - started) * 1000,
+    )
+
+
 # ----------------------------------------------------------------------- the guard
 
 NodeHook = Callable[[dict], dict]
@@ -140,7 +161,7 @@ def node_guard(name: str, *, on_deadline: NodeHook | None = None, on_error: Node
             # 2. DEADLINE, at the TOP of the node (§3.4 point 1).
             settings = get_settings()
             if time.monotonic() - state["started_at"] > settings.ai_graph_deadline_seconds:
-                logger.warning("ai.node=%s deadline exceeded", name)
+                logger.warning("ai.node=%s req=%s deadline exceeded", name, state.get("req") or "-")
                 if on_deadline is not None:
                     return on_deadline(state)
                 return {"error": DEADLINE_MESSAGE, "status": "error"}
@@ -151,7 +172,15 @@ def node_guard(name: str, *, on_deadline: NodeHook | None = None, on_error: Node
             except LlmUnavailable as exc:
                 # 4. A readable failure, plus whatever bookkeeping the node owes even
                 #    when it failed (draft owes `attempts`).
-                logger.warning("ai.node=%s unavailable", name)
+                # The exception TYPE only. Provider error bodies echo the prompt back,
+                # and `status` belongs to the openai exceptions, which do not stop here —
+                # they propagate to `_upstream_error`, which logs them with their code.
+                logger.warning(
+                    "ai.llm_error req=%s node=%s type=%s",
+                    state.get("req") or "-",
+                    name,
+                    type(exc).__name__,
+                )
                 extra = on_error(state) if on_error is not None else {}
                 return {"error": str(exc), "status": "error", **extra}
 
@@ -183,16 +212,26 @@ def _unresolved(question: str) -> Understanding:
 
 @node_guard("understand")
 def _understand(llm: LlmBundle, state: dict) -> dict:
+    started = time.monotonic()
     doc, instr = state["doc"], state["instruction"]
 
     # 1. A file reference with no file is unambiguous. Zero LLM calls, ~1 ms (§17.8).
     question = missing_file_question(instr, state["prior_art"])
     if question is not None:
-        return {
-            "understanding": _unresolved(question),
-            "intent": "answer",
-            "routed_by": "deterministic",
-        }
+        u = _unresolved(question)
+        _node_log(
+            "understand",
+            state,
+            started,
+            routed_by="deterministic",
+            intent=u.intent,
+            resolved=u.resolved,
+            confidence=u.confidence,
+            claims=u.claim_numbers,
+            prior_art_role=u.prior_art_role,
+            gated=False,
+        )
+        return {"understanding": u, "intent": "answer", "routed_by": "deterministic"}
 
     # 2. Three anchored patterns that can only produce a FULLY RESOLVED, parse-validated
     #    Understanding — or None (§17.8). They refuse to fire while a question is pending.
@@ -213,16 +252,24 @@ def _understand(llm: LlmBundle, state: dict) -> dict:
 
     # 3. Everything Python knows that the model might have got wrong. Runs on EVERY path,
     #    including the fast path, and only ever moves towards resolved=False (§17.8).
+    before = u
     u = gate_understanding(u, doc, instr, clarify_count=state.get("clarify_count", 0))
-    logger.info(
-        "ai.node=understand routed_by=%s intent=%s resolved=%s claims=%s reason=%s",
-        routed_by,
-        u.intent,
-        u.resolved,
-        u.claim_numbers,
-        u.reason,
+    _node_log(
+        "understand",
+        state,
+        started,
+        routed_by=routed_by,
+        intent=u.intent,
+        resolved=u.resolved,
+        confidence=u.confidence,
+        claims=u.claim_numbers,
+        prior_art_role=u.prior_art_role,
+        # Did the deterministic gate overrule the model? The single most useful bit
+        # on this line, and the reason the gate is not silent.
+        gated=(before.resolved != u.resolved or before.intent != u.intent),
     )
-    return {"understanding": u, "intent": u.intent, "routed_by": routed_by}
+    calls = {"llm_calls": state.get("llm_calls", 0) + 1} if routed_by == "llm" else {}
+    return {"understanding": u, "intent": u.intent, "routed_by": routed_by, **calls}
 
 
 # --------------------------------------------------------------------------- retrieve
@@ -298,6 +345,7 @@ def select_paragraphs(text: str, words: set[str], *, cap: int) -> str:
 
 
 def _retrieve(state: dict) -> dict:
+    started = time.monotonic()
     # NOT a module-level binding: tests vary the caps and an import-time Settings cannot
     # be varied.
     settings = get_settings()
@@ -342,6 +390,14 @@ def _retrieve(state: dict) -> dict:
         build_context(doc) if u.intent == "answer" else claims_excerpt(doc, sorted(picked))
     )
 
+    _node_log(
+        "retrieve",
+        state,
+        started,
+        claims_retrieved=len(picked),
+        claims_chars=len(claims_text),
+        excerpt_chars=len(excerpt),
+    )
     return {
         "retrieved": Retrieved(
             claim_numbers=sorted(picked),
@@ -358,6 +414,7 @@ def _retrieve(state: dict) -> dict:
 
 @node_guard("plan_ops")
 def _plan_ops(llm: LlmBundle, state: dict) -> dict:
+    started = time.monotonic()
     # FULL text of the claims the understanding resolved, not the 240-char outline lines.
     # `plan_ops` can still emit `replace_claim` and `replace_text`, and 4Z proved live
     # that a model asked to rewrite text it has not been shown correctly refuses (§20.7
@@ -371,7 +428,15 @@ def _plan_ops(llm: LlmBundle, state: dict) -> dict:
     # naming a fence that was never emitted — C18, on the one branch that skips retrieve.
     prior_art = prompts.prior_art_block(state["prior_art"], cap=get_settings().max_context_chars)
     plan = llm.plan(state["instruction"], state["outline"], claims, prior_art, state["history"])
-    return {"plan": plan}
+    _node_log(
+        "plan_ops",
+        state,
+        started,
+        status=plan.status,
+        ops=len(plan.operations),
+        kinds=sorted({op.kind for op in plan.operations}),
+    )
+    return {"plan": plan, "llm_calls": state.get("llm_calls", 0) + 1}
 
 
 def _bump_attempts(state: dict) -> dict:
@@ -404,25 +469,62 @@ def _judge_deadline_pass(state: dict) -> dict:
 
 @node_guard("draft", on_error=_bump_attempts)
 def _draft(llm: LlmBundle, state: dict) -> dict:
+    started = time.monotonic()
     plan = llm.draft(
         state["instruction"], state["retrieved"], state["history"], state.get("critique")
     )
-    return {"plan": plan, "attempts": state.get("attempts", 0) + 1}
+    attempt = state.get("attempts", 0) + 1
+    _node_log(
+        "draft",
+        state,
+        started,
+        attempt=attempt,
+        status=plan.status,
+        ops=len(plan.operations),
+        kinds=sorted({op.kind for op in plan.operations}),
+        # The LENGTH of what was written, never a character of it.
+        out_chars=sum(len(op.model_dump_json()) for op in plan.operations),
+    )
+    return {
+        "plan": plan,
+        "attempts": attempt,
+        "llm_calls": state.get("llm_calls", 0) + 1,
+    }
 
 
 @node_guard("judge", on_deadline=_judge_deadline_pass)
 def _judge(llm: LlmBundle, state: dict) -> dict:
+    started = time.monotonic()
     plan = state["plan"]
+    attempt = state.get("attempts", 0)
     # Nothing to review: a refusal or an empty plan skips the judge's cost entirely.
     if plan.status != "ok" or not plan.operations:
+        _node_log("judge", state, started, attempt=attempt, verdict="skipped", failures=0)
         return {"verdict": JudgeVerdict(verdict="pass", failures=[], suggestion="")}
     verdict = llm.judge(state["instruction"], state["retrieved"], plan)
-    return {"verdict": verdict, "critique": render_critique(verdict)}
+    _node_log(
+        "judge",
+        state,
+        started,
+        attempt=attempt,
+        verdict=verdict.verdict,
+        failures=len(verdict.failures),
+    )
+    return {
+        "verdict": verdict,
+        "critique": render_critique(verdict),
+        "llm_calls": state.get("llm_calls", 0) + 1,
+    }
 
 
 @node_guard("answer")
 def _answer(llm: LlmBundle, state: dict) -> dict:
-    return {"answer": llm.answer(state["instruction"], state["retrieved"], state["history"])}
+    started = time.monotonic()
+    ans = llm.answer(state["instruction"], state["retrieved"], state["history"])
+    # `verified` is counted in `_verify`, which is where the checking happens; here
+    # the number is what the MODEL claimed, which is the other half worth knowing.
+    _node_log("answer", state, started, citations=len(ans.citations), chars=len(ans.text))
+    return {"answer": ans, "llm_calls": state.get("llm_calls", 0) + 1}
 
 
 # ------------------------------------------------------------------- verify (terminal)

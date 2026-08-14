@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -164,20 +165,47 @@ def _apply_and_verify(
     )
 
 
-def _upstream_error(exc: Exception, instruction_chars: int) -> HTTPException:
+def _upstream_error(exc: Exception, instruction_chars: int, req: str) -> HTTPException:
     """First match wins, so the tuple's order is the specificity order."""
     for kind, code, message in _OPENAI_STATUS:
         if isinstance(exc, kind):
-            # The instruction's LENGTH, never the instruction: a patent claim is the
-            # customer's unpublished text and does not belong in a log line.
+            # The exception TYPE and the HTTP status, never the body: provider error
+            # bodies echo the prompt back, and the prompt is the customer's unpublished
+            # patent text. The instruction's LENGTH, never the instruction (§28.2.5).
             logger.warning(
-                "ai.route=chat upstream=%s status=%d instruction_chars=%d",
+                "ai.llm_error req=%s node=- type=%s status=%d instruction_chars=%d",
+                req,
                 type(exc).__name__,
                 code,
                 instruction_chars,
             )
             return HTTPException(code, message)
     raise exc  # not ours — the middleware in main.py turns it into a 500
+
+
+def _done(req: str, started: float, llm_calls: int, response: AiChatResponse) -> AiChatResponse:
+    """The terminal line, on every path out of /chat that reached the graph.
+
+    Wrapped around the return rather than repeated at nine call sites, so a future
+    branch that forgets it does not silently lose the only record that the request
+    finished. `message` is never logged: it is model prose (PLAN §28.2.5).
+    """
+    logger.info(
+        "ai.done req=%s status=%s ms_total=%d llm_calls=%d warnings=%d html=%s proposal=%s",
+        req,
+        response.status,
+        (time.monotonic() - started) * 1000,
+        llm_calls,
+        len(response.warnings),
+        response.html is not None,
+        # The correlation key between this /chat and the /apply that may follow it.
+        # §28.2.5 threads `req=` into /apply's line for that job, but /apply is handed
+        # a proposal and nothing else, and `AiProposal` is a frozen wire contract
+        # (test_client_contract.py) — so the id the proposal ALREADY carries does the
+        # correlating, and no field is added to the wire for a log line. §27.4 row 37.
+        response.proposal.proposal_id if response.proposal else "-",
+    )
+    return response
 
 
 @router.post("/chat", response_model=AiChatResponse)
@@ -209,6 +237,30 @@ async def ai_chat(
 
     base = content_hash(body.html)  # 7. the digest of the exact request bytes
 
+    # One UUID per request, threaded into GraphInput and logged by every node. It is the
+    # only thing that correlates this /chat call to the /apply that may follow it, and it
+    # costs one field. It is NOT request-level tracing: no spans, no propagation to the
+    # OpenAI call, no sampling, no backend (§28.3).
+    req = uuid4().hex
+    started = time.monotonic()
+    # LENGTHS, COUNTS, FLAGS and a TRUNCATED digest. Not one character of the document,
+    # the instruction, the selection or the uploaded file (§28.2.5).
+    logger.info(
+        "ai.request req=%s doc=%s ver=%d html_chars=%d html_sha=%s instr_chars=%d "
+        "has_selection=%s has_file=%s file_chars=%d consented=%s clarify_count=%d",
+        req,
+        body.document_id,
+        body.version_number,
+        len(body.html),
+        base[:12],
+        len(instruction),
+        body.selection is not None,
+        bool(body.context_text),
+        len(body.context_text or ""),
+        body.consented,
+        body.clarify_count,
+    )
+
     # `clarify_count` is untrusted, and the clamp alone is worthless: it bounds the upper
     # end, but 0 is the LOWER end and the client supplies it, so a client sending 0 every
     # turn would get an unbounded sequence of questions, one `understand` call each.
@@ -227,6 +279,7 @@ async def ai_chat(
         history=list(history),
         pending_question=body.pending_question,
         clarify_count=clamped,
+        req=req,
     )
     try:
         # 8. `to_thread` because the graph is synchronous and CPU-and-network bound;
@@ -238,24 +291,39 @@ async def ai_chat(
             asyncio.to_thread(runner, graph_input), settings.ai_request_timeout_seconds
         )
     except Exception as exc:
-        raise _upstream_error(exc, len(instruction)) from exc
+        raise _upstream_error(exc, len(instruction), req) from exc
 
     if result.status == "clarification":  # 9
-        return AiChatResponse(
-            status="needs_clarification",
-            message=result.message,
-            options=result.options,
-            warnings=result.warnings,
+        return _done(
+            req,
+            started,
+            result.llm_calls,
+            AiChatResponse(
+                status="needs_clarification",
+                message=result.message,
+                options=result.options,
+                warnings=result.warnings,
+            ),
         )
     if result.status == "answer":  # 10
-        return AiChatResponse(
-            status="answer",
-            message=result.message,
-            citations=result.citations,
-            warnings=result.warnings,
+        return _done(
+            req,
+            started,
+            result.llm_calls,
+            AiChatResponse(
+                status="answer",
+                message=result.message,
+                citations=result.citations,
+                warnings=result.warnings,
+            ),
         )
     if result.status == "error":  # 11
-        return AiChatResponse(status="error", message=result.message, warnings=result.warnings)
+        return _done(
+            req,
+            started,
+            result.llm_calls,
+            AiChatResponse(status="error", message=result.message, warnings=result.warnings),
+        )
     if result.status == "no_change":
         # 11b. THE GRAPH'S OWN TERMINAL OUTCOME, and it must keep its own sentence. This
         # is the clarify budget being spent: the graph has stopped asking and stated what
@@ -264,21 +332,39 @@ async def ai_chat(
         # throws away the only guidance the user gets at the end of a failed
         # conversation. Both outcomes carry zero operations, so ordering is the only
         # thing that tells them apart.
-        return AiChatResponse(status="no_change", message=result.message, warnings=result.warnings)
+        return _done(
+            req,
+            started,
+            result.llm_calls,
+            AiChatResponse(status="no_change", message=result.message, warnings=result.warnings),
+        )
     if not result.operations:  # 12 — an "edit" the planner emptied
-        return AiChatResponse(
-            status="no_change", message=NOTHING_TO_CHANGE, warnings=result.warnings
+        return _done(
+            req,
+            started,
+            result.llm_calls,
+            AiChatResponse(status="no_change", message=NOTHING_TO_CHANGE, warnings=result.warnings),
         )
     if len(result.operations) > settings.max_operations:  # 13
-        return AiChatResponse(status="error", message=TOO_MANY_OPERATIONS, warnings=result.warnings)
+        return _done(
+            req,
+            started,
+            result.llm_calls,
+            AiChatResponse(status="error", message=TOO_MANY_OPERATIONS, warnings=result.warnings),
+        )
     try:  # 14
         for op in result.operations:
             require(op)
     except PlanError as exc:
-        return AiChatResponse(
-            status="error",
-            message=INVALID_SUGGESTION.format(reason=exc),
-            warnings=result.warnings,
+        return _done(
+            req,
+            started,
+            result.llm_calls,
+            AiChatResponse(
+                status="error",
+                message=INVALID_SUGGESTION.format(reason=exc),
+                warnings=result.warnings,
+            ),
         )
 
     # 15. THE PROMPT DECISION. One boolean, supplied by the client, read in Python. Not
@@ -294,24 +380,34 @@ async def ai_chat(
     # all, which is why AiChatResponse.html is structurally absent here rather than
     # merely withheld.
     if not body.consented:
-        return AiChatResponse(
-            status="proposal",
-            message=result.message,
-            proposal=_build_proposal(body, base, result),
-            warnings=result.warnings,
+        return _done(
+            req,
+            started,
+            result.llm_calls,
+            AiChatResponse(
+                status="proposal",
+                message=result.message,
+                proposal=_build_proposal(body, base, result),
+                warnings=result.warnings,
+            ),
         )
 
     outcome, message, html, report, warnings = _apply_and_verify(  # 16-20
         body.html, list(result.operations), settings
     )
-    return AiChatResponse(
-        status=outcome,
-        # The plan's own restatement is what the user reads on a success; the engine only
-        # supplies a sentence when it has something the plan does not know.
-        message=result.message if outcome == "applied" else message,
-        html=html,
-        verification=report,
-        warnings=list(dict.fromkeys(result.warnings + warnings)),
+    return _done(
+        req,
+        started,
+        result.llm_calls,
+        AiChatResponse(
+            status=outcome,
+            # The plan's own restatement is what the user reads on a success; the engine only
+            # supplies a sentence when it has something the plan does not know.
+            message=result.message if outcome == "applied" else message,
+            html=html,
+            verification=report,
+            warnings=list(dict.fromkeys(result.warnings + warnings)),
+        ),
     )
 
 
@@ -341,6 +437,7 @@ def ai_apply(
     no key configured), and no `async` — there is nothing to await; it is CPU-bound and
     belongs in the threadpool FastAPI already gives a `def` handler.
     """
+    started = time.monotonic()
     proposal = body.proposal
     _cap_or_413(body.html, settings.max_html_chars, HTML_TOO_LARGE)  # 1
     if not proposal.operations:  # 2
@@ -368,6 +465,20 @@ def ai_apply(
 
     outcome, message, html, report, warnings = _apply_and_verify(  # 7-11
         body.html, list(proposal.operations), settings
+    )
+    # Deliberately AFTER the guards rather than at entry: every guard above raises, so a
+    # line here means "this proposal was applied", and a /apply with no line is one that
+    # was refused — which the HTTPException already records. digest_ok and ttl_ok are
+    # therefore always True on this line; they are logged anyway so the format matches
+    # §28.2.5 and so their absence reads as a refusal rather than as a missing field.
+    logger.info(
+        "ai.apply proposal=%s digest_ok=%s ttl_ok=%s ops=%d verify_ok=%s ms=%d",
+        proposal.proposal_id,
+        True,
+        True,
+        len(proposal.operations),
+        outcome == "applied",
+        (time.monotonic() - started) * 1000,
     )
     return AiApplyResponse(
         status=outcome,
