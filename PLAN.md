@@ -17,9 +17,12 @@ independent squad specifications (engine, pipeline, routes, frontend) merged her
 decision table (§1.5). §1 records what was **cut**, §2 what was **corrected**. Both are decided,
 not open.
 
-**Steps §4–§13 (0A–2D) are already built and shipped on `main` at `eb675ac`.** They are preserved
-verbatim as the historical record of how Task 1 was specified and gated. Everything from §14
-onward is Task 2 and is not yet built.
+**Every step in this plan is built and shipped.** §4–§13 (Task 1, 0A–2D) landed first, on `main` at
+`eb675ac`, and §14–§29 (Task 2) followed; all of them are preserved verbatim as the historical
+record of how each was specified and gated, with each phase's own corrections table recording what
+building it overturned. The contents table below carries the status per step. *(This paragraph used
+to end "everything from §14 onward is Task 2 and is not yet built", which was true when it was
+written and has been false since Step 7.)*
 
 ---
 
@@ -9292,8 +9295,9 @@ runs with no API key. **Manual** = a scripted click-through, recorded in the sub
       anonymous volumes.
 - [x] Delete any untracked `client/dist/` before zipping — DONE (6D). (`git ls-files client/dist` is empty;
       `dist` is already gitignored — C33).
-- [x] `client/tsconfig.tsbuildinfo` — DONE (already gitignored at `client/.gitignore:31`; no stray files in the tree). and `client/tsconfig.node.tsbuildinfo`
-      currently sitting in the working tree, and add `*.tsbuildinfo` to `client/.gitignore`.
+- [x] Delete the `client/tsconfig.tsbuildinfo` and `client/tsconfig.node.tsbuildinfo` sitting in the
+      working tree, and add `*.tsbuildinfo` to `client/.gitignore` — DONE (6D). It is at
+      `client/.gitignore:31` and no stray files remain.
 - [x] `uv run ruff format . && uv run ruff check .` clean; `npm run lint` clean — DONE, verified at every commit.
 
 ### 27.4 Corrections found while building Step 6
