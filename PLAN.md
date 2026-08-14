@@ -667,7 +667,7 @@ series.
 | `L` | prompts + llm | `server/tests/test_prompts.py`, `test_llm.py` |
 | `G` | graph | `server/tests/test_graph.py` |
 | `R` | AI routes | `server/tests/test_ai_routes.py` |
-| `F` | `.txt` file handling | `client/src/test/contextFile.test.ts` |
+| `F` | `.txt` file handling | `client/src/test/contextFile.test.tsx` (§24.3 correction 23) |
 | `X` | selection / claim spans | `client/src/test/aiClaims.test.ts`, `aiSelection.test.ts` |
 | **`CP`** | **chat panel** | `client/src/test/chatPanel.test.tsx` |
 
@@ -7576,7 +7576,8 @@ waiting for the API key.
 
 **Files.** `client/src/contextFile.ts` (new, ~110 lines) ·
 `client/src/components/TxtDropZone.tsx` (new, ~110 lines) ·
-`client/src/test/contextFile.test.ts` (new)
+`client/src/test/contextFile.test.**tsx**` (new — **`.tsx`, not `.ts`**: F3, F5 and F8 render
+`TxtDropZone`, and esbuild does not parse JSX in a `.ts` file. See §24.3 correction 23)
 
 ### Spec
 
@@ -7632,8 +7633,9 @@ Notes that must survive into comments in the file:
   `readAsText` on a directory entry rejects — the user would get "Could not read that file" for
   something we can name precisely.
 - **Rule 4 wording.** Bytes in, characters out. `formatBytes` renders one decimal place and
-  `kB`/`MB` (`3_247_104` → `"3.1 MB"`, `41_000` → `"41.0 kB"`). The `40,000` half is a literal, so
-  it always matches the server's own 413 text.
+  `kB`/`MB` in **SI units** — `kB` is 1000 bytes, `MB` is 1 000 000 (`3_247_104` → `"3.2 MB"`,
+  `41_000` → `"41.0 kB"`). The `40,000` half is a literal, so it always matches the server's own
+  413 text. *(This line said `"3.1 MB"` until 5A; see §24.3 correction 22.)*
 - **Rule 6 is not paranoia.** `FileReader.readAsText` **never throws on a mis-encoded file** — it
   silently substitutes U+FFFD, and the AI then reasons over mojibake. Scanning for the replacement
   character is the only cheap detection. A UTF-16 file is the common real case.
@@ -7732,7 +7734,17 @@ already a live region.
 **do not duplicate them here.** Without them, dropping a `.txt` anywhere outside the zone makes the
 browser navigate away to the file, destroying unsaved work.
 
-### Exit gate 5A — `contextFile.test.ts` (8 tests)
+#### 24.3 Corrections found while building 5A
+
+Three defects, continuing the numbering from §23.11.
+
+| # | The spec said | The reality | The fix, as shipped |
+|---|---|---|---|
+| **22** | `formatBytes`: `3_247_104` → `"3.1 MB"` **and** `41_000` → `"41.0 kB"` | **The two examples are mutually inconsistent — no single divisor produces both.** `3_247_104 / 1e6 = 3.247` → `"3.2"`, and only the 1 048 576 divisor gives `"3.1"`; `41_000 / 1024 = 40.04` → `"40.0"`, and only the 1000 divisor gives `"41.0"` | **SI throughout** (`kB` = 1000, `MB` = 1e6), which is what the lower-case `k` in the plan's own label means and what the OS file listing shows. §24.1's note is corrected to `"3.2 MB"`; `41_000 → "41.0 kB"` stands. The rule-4 table row keeps its illustrative `3.1 MB` because it names no byte count |
+| **23** | Files list and §3.6 both name `client/src/test/contextFile.test.ts` | Gate rows **F3, F5 and F8 render `TxtDropZone`**, so the file contains JSX — which esbuild does not parse in a `.ts` file. The alternative (hand-written `React.createElement`) makes the one file a live-pairing reviewer must read the least readable in the client | The file is **`contextFile.test.tsx`**. One file, one `F` series, as specified — only the extension moved. Both references updated |
+| **24** | F7: *"Ordering test: without rule 3 running before rule 4, this file passes the size check and dies as 'Could not read that file'"* | Read as *swap rules 3 and 4*, this is **not observable**: a folder reports `size === 0`, which passes the size check either way, so the swap leaves every row green (verified by mutation). What F7 actually pins is rule 3 running **before the read** | No code change — the implementation is correct and the plan's sentence is right on its own terms ("passes the size check"). Recorded because the mutation that proves F7 is *delete rule 3*, or *move it after the `FileReader`* — **not** swapping it with rule 4. Both of those turn F7 (and F2) red |
+
+### Exit gate 5A — `contextFile.test.tsx` (8 rows, 18 test functions — F1 and F6 parametrise)
 
 | # | Test | Asserts |
 |---|---|---|
