@@ -3,13 +3,13 @@ import { useRef, useState } from "react";
 import {
   formatBytes,
   readDroppedFiles,
-  type ContextFile,
-  type ContextFileResult,
-} from "../contextFile";
+  type TextFile,
+  type TextFileResult,
+} from "../textFile";
 
 export interface TxtDropZoneProps {
-  file: ContextFile | null;
-  onAttach(file: ContextFile): void;
+  file: TextFile | null;
+  onAttach(file: TextFile): void;
   /** The zone never renders its own error — the transcript owns error display. */
   onReject(message: string): void;
   onClear(): void;
@@ -19,6 +19,10 @@ export interface TxtDropZoneProps {
 
 /**
  * Drop target and keyboard path for one `.txt` of context.
+ *
+ * The copy says "for the AI to read" rather than "for context", because the same file type
+ * now has a second, opposite job: `ImportPatentDialog` turns a `.txt` INTO a patent. This
+ * one never changes the document, so the zone says what it does instead of naming a concept.
  *
  * Both paths funnel into `readDroppedFiles`, so there is one rule set rather than
  * two that can drift. The zone renders no error itself: rejections go to the
@@ -38,7 +42,7 @@ export default function TxtDropZone({
   const depth = useRef(0);
   const [over, setOver] = useState(false);
 
-  const deliver = (result: ContextFileResult) =>
+  const deliver = (result: TextFileResult) =>
     result.ok ? onAttach(result.file) : onReject(result.error);
 
   const onDragEnter = (e: React.DragEvent) => {
@@ -100,7 +104,7 @@ export default function TxtDropZone({
           </button>
         </span>
       ) : (
-        <span className="truncate text-slate-500">Drop a .txt for context</span>
+        <span className="truncate text-slate-500">Drop a .txt for the AI to read</span>
       )}
 
       {/* Drag-and-drop is unusable by keyboard, so the hidden input is the real

@@ -1,4 +1,3 @@
-import type { Editor } from "@tiptap/core";
 import type { Node as PMNode } from "@tiptap/pm/model";
 
 /**
@@ -77,17 +76,6 @@ export function claimsInRange(doc: PMNode, from: number, to: number): ClaimHit {
   };
 }
 
-/**
- * Scrolls a claim into view and returns its range so the caller can highlight it.
- * Deliberately does NOT focus, does not select, and does not dispatch a document transaction:
- * clicking a citation while typing in the chat box must not move the caret out of the box.
- */
-export function scrollToClaim(editor: Editor, number: number): { from: number; to: number } | null {
-  const span = claimSpans(editor.state.doc).find((s) => s.number === number);
-  if (!span) return null;
-  const { node } = editor.view.domAtPos(span.from + 1);
-  const element = node.nodeType === 1 ? (node as Element) : node.parentElement;
-  // jsdom has no scrollIntoView — stubbed in src/test/setup.ts, see §25.6.
-  element?.scrollIntoView?.({ block: "center", behavior: "smooth" });
-  return { from: span.from, to: span.to };
-}
+// `scrollToClaim` moved to `navigate.ts` when the outline and the find bar needed the
+// same "walk to the DOM node and scrollIntoView" step. This file is now purely the claim
+// PARSE — the mirror of the server's rule — and nothing in it touches the view.

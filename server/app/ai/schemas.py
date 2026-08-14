@@ -188,6 +188,17 @@ class Retrieved(BaseModel):
     outline: str = ""
     prior_art_excerpt: str = ""  # sanitised but NOT yet fenced — that happens once, in prompts.py
     prior_art_truncated: bool = False
+    # Labels of the sections the Q&A branch could NOT fit into the context. Carried on
+    # the retrieval rather than recomputed in `verify`, because it is a fact about what
+    # the model was shown, and only the node that built the context knows it.
+    omitted_sections: list[str] = Field(default_factory=list)
+    # False when nothing in the question matched the document's wording, so what the model
+    # was shown was chosen by position and not by relevance. The user has to be told a
+    # different sentence in that case — see `verify.partial_context_warning`.
+    context_matched: bool = True
+    # False when the document has no headings at all, which makes "ask about a section by
+    # name" unfollowable.
+    context_headed: bool = True
 
 
 class Citation(BaseModel):

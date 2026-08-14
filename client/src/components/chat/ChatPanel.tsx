@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import type { Editor } from "@tiptap/core";
 
-import { scrollToClaim } from "../../ai/claims";
 import { localFormat } from "../../ai/format";
-import { highlightKey, highlightPlugin, paint } from "../../ai/highlight";
+import { paint } from "../../ai/highlight";
+import { scrollToClaim } from "../../ai/navigate";
 import { buildSelectionContext, subscribeToSelection } from "../../ai/selection";
 import { ApiError, RETRYABLE_STATUSES, aiApply, aiChat, toMessage } from "../../api";
-import type { ContextFile } from "../../contextFile";
+import type { TextFile } from "../../textFile";
 import { useDocumentStore } from "../../store";
 import type { AiProposal, ChatTurn } from "../../types";
 import Composer from "./Composer";
@@ -80,7 +80,7 @@ export default function ChatPanel({ documentId, versionNumber }: ChatPanelProps)
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
-  const [file, setFile] = useState<ContextFile | null>(null);
+  const [file, setFile] = useState<TextFile | null>(null);
   const [range, setRange] = useState<{ from: number; to: number } | null>(null);
   const [sending, setSending] = useState(false);
   /** Sticky: set by a 503, cleared never. The composer explains itself without another round-trip. */
@@ -522,15 +522,10 @@ export default function ChatPanel({ documentId, versionNumber }: ChatPanelProps)
     [],
   );
 
-  // The highlight plugin is chat's affordance, not the editor's: registering it here keeps
-  // Editor.tsx free of any plugin lifecycle.
-  useEffect(() => {
-    if (!editor || editor.isDestroyed) return;
-    editor.registerPlugin(highlightPlugin());
-    return () => {
-      if (!editor.isDestroyed) editor.unregisterPlugin(highlightKey);
-    };
-  }, [editor]);
+  // NOTE: the highlight plugin is registered by `Editor.tsx`, not here. It moved when the
+  // find bar became a second consumer — this panel is unmounted whenever the chat column
+  // is collapsed, and a decoration layer that disappears with it is no use to anyone else.
+  // This component still owns the citation flash; it just calls `paint()`.
 
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;

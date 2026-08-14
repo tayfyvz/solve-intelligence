@@ -43,6 +43,7 @@ function treeProps(overrides: Partial<PatentTreeProps> = {}): PatentTreeProps {
     onSelectDocument: vi.fn(),
     onSelectVersion: vi.fn(),
     onCreate: vi.fn(),
+    onImport: vi.fn(),
     onRenameDocument: vi.fn(async () => null),
     onRenameVersion: vi.fn(async () => null),
     onPageDocuments: vi.fn(),

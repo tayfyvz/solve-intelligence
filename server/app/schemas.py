@@ -321,3 +321,33 @@ class AiApplyResponse(BaseModel):
         elif not self.html:
             raise ValueError("status='applied' requires non-empty html")
         return self
+
+
+# ------------------------------------------------------------------- the import surface
+
+
+class TextImportRequest(BaseModel):
+    """A `.txt` the user wants to become a patent. `text` is the file's decoded content;
+    the client has already rejected non-UTF-8, NUL bytes and the wrong extension."""
+
+    text: str
+    # Used only to suggest a title when the file's own first line is not one. It never
+    # reaches the document body, so it is not sanitised here — `Title` sanitises whatever
+    # the user finally submits to POST /api/documents.
+    filename: str | None = None
+
+
+class TextImportResult(BaseModel):
+    """The conversion, and everything the importer was unsure about.
+
+    `content` is exactly what a save will store: the conversion sanitises and
+    canonicalises before returning, so the preview is not an approximation of the result.
+    `notes` is the "never fail silently" half — a claim set with duplicate numbers, a file
+    with no claims and a file that is not a patent at all are all importable, and all
+    three say so here rather than quietly becoming something else.
+    """
+
+    title: str
+    content: str
+    claim_count: int
+    notes: list[str] = Field(default_factory=list)

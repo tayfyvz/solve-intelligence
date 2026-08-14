@@ -197,3 +197,24 @@ export interface AiApplyResponse {
   verification: AiVerifyReport | null;
   warnings: string[];
 }
+
+// ------------------------------------------------------------------- the import surface
+
+export interface TextImportRequest {
+  /** The decoded file content. Non-UTF-8, NUL bytes and the wrong extension are already
+   *  rejected client-side by `textFile.ts`. */
+  text: string;
+  /** Used only to suggest a title when the file's own first line is not one. */
+  filename: string | null;
+}
+
+export interface TextImportResult {
+  title: string;
+  /** Exactly what a save will store: the server sanitises and canonicalises before
+   *  returning, so the preview is not an approximation of the result. */
+  content: string;
+  claim_count: number;
+  /** Everything the importer was unsure about, in sentences a user can read. Empty when
+   *  the file converted cleanly. Never silently dropped content. */
+  notes: string[];
+}

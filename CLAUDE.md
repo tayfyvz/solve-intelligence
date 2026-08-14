@@ -71,6 +71,21 @@ Violating any of these is a bug, not a style preference.
    justification — atomicity, not convenience — and the reason must be a comment on the field.**
 9. **`PUT /versions/{n}` updates in place and never creates a version.** This is challenge
    requirement 3; a test asserts the version count is unchanged.
+10. **Context degradation is tiered, never looped.** `build_outline` and `build_context` evaluate
+    a fixed ladder of tiers and return the first that fits — no "shrink until it fits" loop, and
+    no randomness anywhere in the ranking (the sort key is a total order). The same document and
+    the same question therefore produce the *same* context, byte for byte, which is what makes an
+    AI answer reproducible enough to argue with. L4 asserts it.
+11. **Anything the model was not shown is NAMED, never silently dropped.** `build_context`
+    returns a `ContextView` carrying the labels of the sections it could not fit; `_retrieve`
+    puts them on `Retrieved.omitted_sections`, and `_verify` turns them into a user-visible
+    warning. There is no path on which the Q&A branch answers from part of a document and says
+    nothing about it. L3 and L15 assert both halves.
+12. **Navigation never dispatches a document transaction.** The outline and the find bar read
+    `editor.state.doc` and call `scrollIntoView`; the only transaction either sends is `paint()`,
+    which is meta-only (`docChanged === false`). This is what lets navigation coexist with
+    invariant 7 — and it is why there is no paginated editor. N3/N4 assert `getHTML()` and the
+    dirty flag are untouched after navigating.
 
 ## Verified environment facts
 
@@ -114,6 +129,22 @@ Confirmed by running the real libraries — do not re-derive or assume otherwise
   `insert_section` request carrying prior-art text). The five-call worst case at the observed max
   is ~33 s. `reasoning_effort="low"` is accepted **on its own** — but see the mutual-exclusion row
   above before setting it; it is shipped as `None`.
+- **A WHOLE 37-page patent in one `answer` call is FASTER than a packed 30,000-char context.**
+  Measured 2026-08-14 over the real 107,512-character imported patent, real schemas, real key:
+
+  | answer budget | context sent | latency |
+  |---|---|---|
+  | 30,000 | 30,000, fragmented | median 6.3 s, max 9.3 s, **one call hit the 12 s node timeout** |
+  | 120,000 | 106,827 = the whole document | **median 2.3 s, min 1.6 s, max 3.5 s** (n=6) |
+
+  Bigger is faster, which is not the intuition and is why this is measured rather than
+  reasoned about: a context full of elision markers and a "not shown" manifest makes the
+  model work harder than the document itself does. `max_answer_context_chars` is therefore
+  **120,000** — "the largest real document", not "the largest the window permits". Live end
+  to end: `claims_chars=106827 sections_omitted=0 warnings=0`, 17,601 input tokens, 6.2 s.
+  **`ai_node_timeout_seconds` is unchanged at 12.0**, because the measured max at the new
+  budget is 3.5 s; do not raise it without re-deriving PLAN §3.4's whole timeout chain,
+  which is calibrated as 5 × 12 < 65 < 75.
 - **`@tiptap/core` 2.27.1.** `setContent(content, emitUpdate?, parseOptions?, options?)` is
   **positional**. Use `setContent(html, true)` so `onUpdate` fires — dropping that `true` is the
   highest-severity one-character bug in this feature. *(An earlier version recommended enabling
@@ -146,6 +177,16 @@ Confirmed by running the real libraries — do not re-derive or assume otherwise
   recreate, so `docker compose down -v` is the escape hatch when dependencies change.
 - **Patent 1 claim 7 references "claim 5" where it means claim 6.** The seed data contains a real
   cross-reference error. Do not "fix" it — it is useful test material.
+- **`event.target.files` is a LIVE FileList.** Setting `input.value = ""` (which you must, or
+  re-picking the same file fires no `change`) **empties the list you are about to read**. Read
+  first, or copy with `Array.from`, then reset. jsdom does not reproduce this, so every unit test
+  passes and the first real click in Chrome silently reports "no file". `TxtDropZone` reads first;
+  `ImportPatentDialog` copies. A raw-source test pins the ordering, because nothing else can.
+- **`understand` is shown `build_outline`, never the document.** It classifies the request; the
+  text arrives one step later, in `retrieve`. Left unsaid, the model does the reasonable thing and
+  asks the user to *paste in* the section they asked about — resolved=False, run over, before
+  retrieval ever happens. `UNDERSTAND_SYSTEM` now states the two-step shape explicitly. This cost a
+  live click-through to find: every node was behaving exactly as written.
 
 ## Code style
 
@@ -172,7 +213,27 @@ Tests must justify their existence — target ~20 meaningful ones, not a coverag
 ## Scope discipline
 
 Do not build: Option B (collaboration, presence, CRDT), auth, autosave, version **diff or
-delete**, streaming, agent loops, RAG, persisted chat, or CI. *(This list used to ban version
+delete**, streaming, agent loops, persisted chat, or CI. *(This list used to ban version
 "rename/diff/delete". **Version rename shipped in Task 1** and is in the UI — a scope rule that
 forbids something already built teaches the reader to distrust the whole list.)* "Not overly complex" is an explicit requirement
 of the brief. Ideas beyond scope belong in the `DESIGN.md` future-work section, not in the code.
+
+**RAG came off that list**, on the repo owner's explicit authorisation, when long patents
+arrived: a 37-page patent does not fit in any context budget, so *something* has to decide what
+the model reads. What is now **allowed** is exactly one mechanism, and no more:
+
+- **Deterministic, lexical, in-process retrieval.** `outline.build_context` ranks the
+  description's paragraphs by word overlap with the question, packs them to a fixed budget in
+  rank order, renders them in document order, and **names everything it left out**. It is pure
+  Python over the parsed document — the same shape as `nodes.select_paragraphs`, which has been
+  there since Task 2.
+
+What is **still banned**, and why the line is here and not further out:
+
+- **Embeddings, a vector store, or any new service or dependency.** Nothing is indexed, nothing
+  is persisted, nothing is warmed. Retrieval is a pure function of (document, question).
+- **Chunking with overlap, re-ranking models, or a retrieval loop.** Tiers are *evaluated*, never
+  iterated — see invariant 10.
+- **Retrieval on the editing path.** Only the `answer` branch retrieves; `plan_ops` and `draft`
+  still read `claims_excerpt`, in full, for the reason PLAN §21.6 records.
+- Everything else on the list above, unchanged.

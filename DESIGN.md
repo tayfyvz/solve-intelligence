@@ -133,10 +133,12 @@ server/app/
 ├── crud.py          # queries
 ├── sanitize.py      # nh3 allowlist
 ├── data.py          # seed fragments + titles
-├── routers/{documents,ai}.py
+├── textimport.py    # plain text -> canonical editor HTML, with notes
+├── routers/{documents,ai,imports}.py
 └── ai/            # the engine — see server/README.md for the reading order
     ├── document.py    # ParsedDocument, parse(), render() — the round-trip contract
-    ├── outline.py     # build_outline / build_context / claims_excerpt
+    ├── outline.py     # build_outline / build_context / claims_excerpt, and the
+    │                  #   question-scoped section retrieval build_context now does
     ├── operations.py  # the six operations, and KIND_ORDER
     ├── schemas.py     # every model↔engine contract, and require()
     ├── apply.py       # bind → apply → renumber once → remap cross-references
@@ -153,8 +155,10 @@ client/src/
 ├── App.tsx
 ├── api.ts, types.ts
 ├── store.ts                 # useDocumentStore
-├── contextFile.ts           # .txt validation
-├── ai/{claims,selection,highlight,format}.ts   # claim spans, selection, the format fast-path
+├── textFile.ts              # .txt validation, shared by BOTH .txt flows (see §5.8)
+├── useEditorDoc.ts          # the editor's live document, for the navigator
+├── ai/{claims,navigate,selection,highlight,format}.ts  # claim spans, the outline and
+│                                                    #   find, selection, the format fast-path
 └── components/
     ├── Banner.tsx           # the app bar: what is open, and the two save buttons
     ├── PatentTree.tsx       # patents, with the open one expanded to its versions
@@ -388,7 +392,147 @@ rewrite a claim it had only seen truncated to 240 characters; the optional prior
 that content inside the delimiter is reference material only. Tests inject a fake planner
 function — no Protocol, no DI container.
 
-### 5.7 `.txt` upload
+### 5.6a Long patents: what the model reads
+
+A real patent is not the seed. Measured on a 37-page application — 112,659 characters, 60
+claims, 89 description paragraphs — the three context views cost:
+
+| Builder | Read by | Was |
+|---|---|---|
+| `build_outline` | the planner | 7,848 chars = **7%** of the document |
+| `claims_excerpt` | every generating node | 1,328 chars for 3 claims |
+| `build_context` | the `answer` branch only | 25,986 chars = **23%** |
+
+`build_context`'s old tier 3 replaced the *entire* description with the literal string
+`(omitted — 89 paragraphs)`. On 37 pages that tier fires, so the model could see only the
+claims — and, asked about the Background, it dutifully quoted the placeholder. The citation
+verifier caught it, which is the system working; what the user then read was
+*"The AI quoted "(omitted — 89 paragraphs)" … but that text is not in this document."*
+An accusation, about a string this program wrote itself, with no next step in it.
+
+**The first fix is not retrieval — it is the budget.** The 30,000-character cap was ~7,500
+tokens against a model that takes hundreds of thousands, so the cliff was self-inflicted.
+`max_answer_context_chars` is now **120,000**, chosen as "the largest real document" rather
+than "the largest the window permits", and the result was **measured, not assumed**:
+
+| answer-branch budget | context sent | latency (n=6) |
+|---|---|---|
+| 30,000 | 30,000 (fragmented) | median 6.3 s, max 9.3 s, **one call hit the 12 s node timeout** |
+| 120,000 | 106,827 (the whole patent) | **median 2.3 s, min 1.6 s, max 3.5 s** |
+
+Bigger is *faster* here, which is not the intuition: a fragmented context with elision
+markers makes the model work harder than the document itself. Live, the 107,512-character
+patent goes to the model whole — `claims_chars=106827 sections_omitted=0 warnings=0`,
+17,601 input tokens, 6.2 s end to end. So on every realistic patent **there is no retrieval
+at all**, and the honesty machinery below is correctly silent.
+
+**Retrieval is what happens above the budget**, which is reachable by design: the AI input
+ceiling is 200,000. `build_context` ranks the non-claim paragraphs by word overlap with the
+question — plus a *capped* bonus for their section heading — packs them to the budget, and
+renders them in document order under `## heading` rules. Five tiers, evaluated and never
+looped, so the same document and question give the same bytes (invariant 10).
+
+An adversarial audit of that mechanism found six defects, all now fixed and each with a
+test (L16–L21) built from its own reproduction:
+
+1. **The packer never charged for the `## heading` lines it emits**, so every tier overshot
+   by the same amount — trimming the claims in tiers 3 and 4 handed the freed bytes straight
+   back, and the document fell to the hard cut regardless. The two tiers that exist to avoid
+   the cut could never reach it.
+2. **The hard cut severed the `--- NOT SHOWN IN FULL ---` block**, on exactly the documents
+   that need it, leaving the prompt naming a marker the model had never been given. The
+   manifest is now re-attached *after* the cut, so it is the one thing that always survives.
+3. **A paragraph bigger than the whole budget was skipped**, dropping the only paragraph that
+   mentioned the question, filling the budget with prose that scored zero, and then advising
+   the user to "ask about that section by name" — advice that provably could not work,
+   because asking again produced the same skip. The top-ranked paragraph is now *clipped*.
+4. **A question matching nothing degenerated to "the first N paragraphs"**, silently, and was
+   byte-identical to asking nothing at all. "Summarise this patent" saw one and a half of
+   five sections and omitted the one called Summary. It now spreads round-robin across
+   sections, and `matched=False` reaches the user as its own sentence — because "I did not
+   see all of X" is literally true and implies the opposite of the truth.
+5. **The heading bonus scaled with the heading's length**, so naming a long section in your
+   question buried an answer filed anywhere else. Capped at 1: a tiebreak, not a multiplier.
+6. **"Ask about a section by name" is unfollowable with no headings**, and a user who tried
+   made it worse. That case now says *"quote a phrase from the part you mean"* — the one
+   instruction that always works against a lexical score.
+
+**Nothing is dropped in silence** (invariant 11). Three channels, because one is not enough:
+
+1. an inline `[… 12 paragraphs not shown here …]` where a run was elided;
+2. a `--- NOT SHOWN IN FULL ---` manifest naming the sections, so the model can say *"that
+   is in the Detailed Description, which I was not shown"* instead of guessing;
+3. `ContextView.omitted` → `Retrieved.omitted_sections` → a **user-visible warning**, in
+   one of three forms, because the same omission means three different things:
+   *"…I did not see all of: "FIELD OF THE INVENTION", … Ask about one of those by name"*;
+   *"…it has no section headings to aim at. Quote a phrase and I will find it"*; and, when
+   nothing matched at all, *"None of the words in your question appear in this document, so
+   I read it from the start rather than searching."*
+
+The first of those is a promise, and it is kept: naming a section is what makes it rank.
+Verified live on the 107,512-character imported patent at a squeezed budget — the Background
+question is answered with a verbatim quote, and a follow-up naming the Brief Description of
+the Drawings pulls *that* section in and lists the Background as newly omitted.
+
+The verifier keeps its job. A quote that is not in the document is still caught; it is only
+the *sentence* that changed, and only when the quote is one of our own markers
+(`W_QUOTED_SCAFFOLD` vs `W_UNVERIFIED_QUOTE`). `verify.py` recognises the marker's shape
+rather than importing `outline.py`, so it still imports `document.py` and nothing else; L9
+asserts the two agree.
+
+**Rejected:**
+
+- **Embeddings + a vector store.** The unit of retrieval a patent question actually wants is
+  a *named section*, and a patent already carries its own headings — the structure is in the
+  document, so paying for an index to rediscover it is backwards. It also adds a dependency,
+  a persistence story and a warm-up, and makes the result non-reproducible. Overlap scoring
+  is ~30 lines and reuses `nodes.tokens`.
+- **A "shrink until it fits" loop.** It is the obvious code and it is what the existing
+  tiers were written to avoid: two identical requests could produce two different contexts,
+  and an answer nobody can reproduce is an answer nobody can argue with.
+- **Just raising the budget to 200,000 characters.** It moves the cliff without removing it,
+  costs ~50× per Q&A turn, and still fails at 65 pages — with the same silent failure mode.
+- **Summarising the description with a second LLM call.** A summary is not quotable, so the
+  citation verifier — the thing that stopped the hallucination in the first place — would
+  have had nothing to check against.
+
+One prompt defect fell out of this and only a live click-through could have found it:
+`understand` is shown the *outline*, so asked about the Background it replied *"please paste
+the Background of the Invention text"* and terminated the run before `retrieve` ever fetched
+the section. Every node behaved exactly as written; the prompt simply never mentioned that a
+second step exists. `UNDERSTAND_SYSTEM` now says so.
+
+### 5.7 `.txt` upload — two different jobs
+
+A `.txt` dropped on the **chat panel** is reference material: the AI reads it, the server
+never stores it, the document does not change. A `.txt` dropped on the **import dialog**
+*becomes* a patent. Same file type, opposite consequences, so the dialog says which one the
+user is in and the chat zone says the converse.
+
+`textFile.ts` holds the rules both share — extension, folder, BOM, NUL, mojibake, arity —
+and takes the one thing that differs as a parameter: import is bounded by the **save** cap
+(1,000,000 bytes), not the AI context cap (40,000), because a 60-page patent is a perfectly
+ordinary import and an absurd chat attachment.
+
+**Conversion happens on the server** (`textimport.py`, `POST /api/import/text`), because the
+definition of "a claim" lives in `ai/document.py`'s parser and a second definition in
+TypeScript would drift from it. The route takes **no `db` parameter** — the same enforcement
+as the AI routes — so import reuses `POST /api/documents` and `POST /.../versions` rather
+than growing a second write path with its own sanitising and size limits.
+
+The conversion ends with `render(parse(sanitize_html(html)))`. Sanitise first, canonicalise
+second: the other order stores bytes the save path would then change, so the preview and the
+database would differ. What comes back is therefore byte-identical to what a save will
+store, and `parse → render → parse` on it is stable — asserted on every awkward input rather
+than assumed.
+
+**Every judgement call is a `note`, shown before the patent exists**: no Claims heading found
+(one was added), duplicate claim numbers, gaps, claims out of order, a lone numbered
+paragraph that is not a claim set, a file that is not a patent at all. Numbering is **never
+repaired** — renumbering on import would rewrite a legal document nobody asked us to touch,
+and the cross-references would then point at the old numbers.
+
+### 5.8 `.txt` upload (chat context)
 
 Dropped onto the chat panel. Validated client-side: `.txt` only, non-empty, size-capped, BOM
 stripped, NUL rejected. Shown as a chip that stays until cleared and is re-sent with each request.
@@ -461,7 +605,7 @@ land in another. All errors render in the UI, never only in the console.
 Chosen for value rather than coverage percentage.
 
 > **Status: every row below is written and passing.** The count outgrew the "roughly 20" this
-> section originally planned for — 784 in total, 558 backend and 226 frontend — because the AI
+> section originally planned for — 864 in total, 611 backend and 253 frontend — because the AI
 > layer arrived with four deterministic gates of its own. `PLAN.md` §31.2 is the single source of
 > truth for the number. What holds regardless of the count: **none of them requires an API key.**
 
@@ -512,9 +656,13 @@ Chosen for value rather than coverage percentage.
 ## 10. Out of scope
 
 **Not building:** Option B (websockets, presence, CRDT); auth; autosave; version delete, diff or
-branching; streaming responses; agent loops or RAG; persisted chat history; CI; USPTO amendment
+branching; streaming responses; agent loops; persisted chat history; CI; USPTO amendment
 markup. *(Version **rename** was on this list and then shipped in Task 1 — it is in the UI, and
-leaving it here would teach the reader to distrust the rest of the list.)*
+leaving it here would teach the reader to distrust the rest of the list. **RAG** was on it
+too, and came off on the owner's explicit authorisation when 37-page patents arrived: §5.6a
+is what was actually built, and `CLAUDE.md`'s scope section records exactly what is now
+allowed — deterministic lexical retrieval, in process — and what is still banned: embeddings,
+a vector store, chunking with overlap, re-ranking models, and any retrieval loop.)*
 
 **Known limitations, accepted deliberately for this submission:**
 
@@ -538,6 +686,13 @@ leaving it here would teach the reader to distrust the rest of the list.)*
 
 **Would do next, given more time** — and how it maps onto Solve's stack:
 
+- **Prompt caching on the Q&A branch — the highest-value item on this list.** Now that a whole
+  patent fits in one call, the document sits at the *front* of the prompt and is identical on
+  every turn of a conversation, which is exactly the shape a cached prefix needs. It was
+  impossible before: the old question-scoped context changed the prefix every turn, so nothing
+  could ever hit. Cached input is roughly 90% cheaper and faster to prefill, so this removes the
+  only real objection to sending the whole document — at zero cost to reliability, because the
+  model still sees every word. The smart optimisation here is caching, not smarter retrieval.
 - SQLite → **Postgres on RDS**; the SQLAlchemy models port with a URL change
 - **SuperTokens** for auth, scoping documents to users
 - Option B collaborative editing on the same TipTap surface (Yjs)

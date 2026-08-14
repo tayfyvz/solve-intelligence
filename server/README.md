@@ -10,19 +10,24 @@ app
 ├── main.py        # FastAPI app factory: CORS, lifespan, router wiring
 ├── routers/
 │   ├── documents.py  # Documents and versions
-│   └── ai.py         # POST /api/ai/chat (run 1) and POST /api/ai/apply (run 2).
-│                     # Neither handler takes a `db` parameter — the AI surface
-│                     # never writes to the database; only an explicit save does.
+│   ├── ai.py         # POST /api/ai/chat (run 1) and POST /api/ai/apply (run 2).
+│   │                 # Neither handler takes a `db` parameter — the AI surface
+│   │                 # never writes to the database; only an explicit save does.
+│   └── imports.py    # POST /api/import/text — .txt -> the HTML this app stores.
+│                     # No `db` parameter either: it converts and reports, and the
+│                     # client sends the result to the existing create routes.
 ├── config.py      # Typed settings (pydantic-settings), loaded from env and .env
 ├── models.py      # DB models (Document, DocumentVersion)
 ├── schemas.py     # Pydantic request/response models — the wire contract
 ├── crud.py        # Queries and writes
 ├── sanitize.py    # nh3 allowlist applied on the save path
 ├── data.py        # Seed data (stored pre-normalised, in TipTap's getHTML() form)
+├── textimport.py  # plain .txt -> canonical editor HTML, with a note per judgement call
 ├── db.py          # Engine, session factory, SQLite pragmas
 └── ai/            # The AI editing engine. Read it in this order:
     ├── document.py    # ParsedDocument, parse(), render() — the round-trip contract
-    ├── outline.py     # build_outline / build_context / claims_excerpt
+    ├── outline.py     # build_outline / build_context / claims_excerpt, and the
+    │                  #   question-scoped retrieval build_context does above its budget
     ├── operations.py  # the six operations, and KIND_ORDER
     ├── schemas.py     # every model↔engine contract, and require()
     ├── apply.py       # bind → apply → renumber once → remap cross-references

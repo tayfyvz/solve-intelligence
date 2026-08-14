@@ -113,6 +113,19 @@ function fakeEditor(html = "<p>live</p>"): Editor {
     unregisterPlugin: () => {},
     on: () => {},
     off: () => {},
+    // An empty ProseMirror document, duck-typed to exactly what the navigator reads:
+    // `forEach` for the outline and `descendants` for find. App now mounts Outline and
+    // FindBar beside the editor, and a stub missing these throws out of an effect and
+    // fails every test in this file for a reason that has nothing to do with the shell.
+    state: {
+      doc: {
+        forEach: () => {},
+        descendants: () => {},
+        content: { size: 0 },
+      },
+      tr: { setMeta: () => ({}) },
+    },
+    view: { dispatch: () => {}, domAtPos: () => ({ node: document.body }) },
   } as unknown as Editor;
 }
 

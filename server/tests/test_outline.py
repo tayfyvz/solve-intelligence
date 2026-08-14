@@ -87,7 +87,8 @@ def test_build_outline_applies_every_truncation_tier() -> None:
 def test_build_context(seed: str, blocks_per_claim: list[int]) -> None:
     """T10 — the Q&A view carries every claim in full, not truncated at 240."""
     doc = parse(seed)
-    out = build_context(doc)
+    view = build_context(doc, max_chars=30_000)
+    out = view.text
     assert len(out) <= 30_000
     assert "<" not in out
     for claim in doc.claims:
@@ -96,6 +97,9 @@ def test_build_context(seed: str, blocks_per_claim: list[int]) -> None:
         for block in claim.blocks:
             assert block.html.split("<")[0][:60] in out
     assert [len(c.blocks) for c in doc.claims] == blocks_per_claim
+    # A seed fits whole, so tier 1 wins: nothing omitted, and therefore no warning.
+    assert view.omitted == ()
+    assert view.omitted_paragraphs == 0
 
 
 def test_build_context_hard_cuts_a_pathological_document() -> None:
@@ -111,12 +115,20 @@ def test_build_context_hard_cuts_a_pathological_document() -> None:
         + "".join(f"<p>{'y' * 200}</p>" for _ in range(1_000))
         + "<p>2. b</p>"
     )
-    out = build_context(parse(many_blocks))
-    assert len(out) == 30_000
-    assert out.endswith(CONTEXT_TAIL)
+    view = build_context(parse(many_blocks), max_chars=30_000)
+    assert len(view.text) <= 30_000
+    assert CONTEXT_TAIL in view.text
+    # Tier 5 cuts the STRING; it must not cut the honesty. It used to: a blind end-to-end
+    # byte cut severed the NOT SHOWN block, leaving ANSWER_SYSTEM rule 2b naming a marker
+    # the model had never been given, on exactly the documents where it matters most. The
+    # manifest is now re-attached AFTER the cut, so it is the one thing that always
+    # survives — which is why the tail is no longer the last thing in the string.
+    assert view.omitted != ()
+    assert "--- NOT SHOWN IN FULL ---" in view.text
+    assert view.text.rstrip().endswith("Never guess at it.")
 
     one_huge = "<h1>Claims</h1><p>1. " + "x" * 200_000 + "</p><p>2. b</p>"
-    assert len(build_context(parse(one_huge))) <= 30_000
+    assert len(build_context(parse(one_huge), max_chars=30_000).text) <= 30_000
 
 
 def test_claims_excerpt_selects_and_never_truncates() -> None:

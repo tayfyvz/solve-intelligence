@@ -3,7 +3,10 @@ import { useCallback, useEffect, useState } from "react";
 import Banner from "./components/Banner";
 import DirtyDialog from "./components/DirtyDialog";
 import Editor from "./components/Editor";
+import FindBar from "./components/FindBar";
+import ImportPatentDialog from "./components/ImportPatentDialog";
 import NewPatentDialog from "./components/NewPatentDialog";
+import Outline from "./components/Outline";
 import PatentTree from "./components/PatentTree";
 import SidePanel from "./components/SidePanel";
 import ChatPanel from "./components/chat/ChatPanel";
@@ -17,7 +20,8 @@ import { useDocumentStore } from "./store";
 type PendingSelection =
   | { kind: "document"; id: number }
   | { kind: "version"; n: number }
-  | { kind: "create" };
+  | { kind: "create" }
+  | { kind: "import" };
 
 /**
  * Store writes report failure as `false` and leave the sentence in `error`. Inline
@@ -97,6 +101,7 @@ export default function App() {
   // handled by the store's token, so `pending` survives a remount without help.
   const [pending, setPending] = useState<PendingSelection | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [leftWidth, setLeftWidth] = useState(280);
@@ -136,6 +141,7 @@ export default function App() {
       setPending(null);
       if (target.kind === "document") void selectDocument(target.id);
       else if (target.kind === "version") void selectVersion(target.n);
+      else if (target.kind === "import") setImportOpen(true);
       else setCreateOpen(true);
     },
     [selectDocument, selectVersion],
@@ -219,6 +225,7 @@ export default function App() {
             onSelectDocument={(id) => request({ kind: "document", id })}
             onSelectVersion={(n) => request({ kind: "version", n })}
             onCreate={() => request({ kind: "create" })}
+            onImport={() => request({ kind: "import" })}
             onRenameDocument={(id, newTitle) =>
               messageOnFailure(() => renameDocument(id, newTitle))
             }
@@ -226,6 +233,12 @@ export default function App() {
             onPageDocuments={(offset) => void loadDocuments(offset)}
             onShowMoreVersions={() => void loadMoreVersions()}
           />
+          {/* Deliberately a SIBLING of the tree, not a tab: on a 37-page patent the
+              outline is how you move, and hiding it behind the patent list would make
+              the one control the length of the document demands the one you cannot see. */}
+          <div className="border-t border-slate-200 pt-1.5">
+            <Outline />
+          </div>
         </SidePanel>
 
         {/* overflow-hidden, not overflow-y-auto: the scroll container for the
@@ -268,11 +281,17 @@ export default function App() {
                 loading ? "pointer-events-none opacity-40" : "opacity-100"
               }`}
             >
+              {/* OUTSIDE the keyed div: remounting the find bar on every version switch
+                  would clear a query the user is still working with. It reads the live
+                  editor from the store, so it needs no key of its own. */}
+              <FindBar />
               {/* Invariant #7: content changes ONLY by remount. This key is the
                   whole mechanism — no sync effect, no setContent. */}
               <div
                 key={`${documentId}:${versionNumber}`}
-                className="min-h-0 flex-1 animate-[fade-in_200ms_ease-out] overflow-y-auto bg-slate-50 px-4"
+                className={`min-h-0 flex-1 animate-[fade-in_200ms_ease-out] overflow-y-auto bg-slate-50 px-4 ${
+                  leftCollapsed && rightCollapsed ? "editor-wide" : ""
+                }`}
               >
                 <Editor content={content} />
               </div>
@@ -343,6 +362,24 @@ export default function App() {
           onSaveAsNewVersion={() => void saveAsNewVersion()}
           onDiscard={() => commit(pending)}
           onCancel={() => setPending(null)}
+        />
+      )}
+
+      {importOpen && (
+        <ImportPatentDialog
+          openPatentTitle={documentId === null ? null : title}
+          onCancel={() => setImportOpen(false)}
+          onImport={async (destination, newTitle, newContent) => {
+            const message = await messageOnFailure(() =>
+              destination === "document"
+                ? createDocument(newTitle, newContent)
+                : // No name: the server generates one from the names already taken, so
+                  // importing the same file twice cannot 409 on a duplicate version name.
+                  saveAsNewVersion(undefined, { content: newContent }),
+            );
+            if (!message) setImportOpen(false);
+            return message;
+          }}
         />
       )}
 

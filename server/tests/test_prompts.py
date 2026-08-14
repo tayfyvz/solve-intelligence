@@ -270,3 +270,32 @@ def test_the_retry_critique_names_every_failure() -> None:
 
     messages = build_draft_messages("write it", retrieved(), [], critique)
     assert messages[-1]["content"] == critique
+
+
+def test_understand_is_told_the_text_arrives_later() -> None:
+    """The defect a live click-through found, and nothing else could.
+
+    `understand` is shown `build_outline` and never the document, so on a 37-page patent it
+    answered "According to the Background section, what is the KEY FACT…" with *"please
+    paste the Background of the Invention text (it isn't included here)"* — resolved=False,
+    confidence=low, and the run terminated before `retrieve` ever fetched the section it
+    was asking for. The text was in the user's editor the whole time.
+
+    No pure test could catch it: every node was behaving exactly as written, and the only
+    thing wrong was that the prompt never told the model a second step exists. This asserts
+    the fix is present, because the failure mode is silent, plausible and infuriating.
+    """
+    assert "YOU ARE SHOWN AN OUTLINE, NOT THE DOCUMENT ITSELF." in UNDERSTAND_SYSTEM
+    assert "NEVER ask the user to paste" in UNDERSTAND_SYSTEM
+    # And the rule it qualifies must still be there, or the carve-out has nothing to carve.
+    assert "the request names something this document does not contain" in UNDERSTAND_SYSTEM
+
+
+def test_the_answer_prompt_names_both_not_shown_markers() -> None:
+    """The Q&A branch can now be handed a PARTIAL document, so the model has to be told
+    what the two elision markers mean. Quoting one is the failure `verify.py` catches with
+    W_QUOTED_SCAFFOLD; not knowing it exists is how a model answers from the claims alone
+    and never says it could not see the rest."""
+    assert "paragraphs not shown here" in ANSWER_SYSTEM
+    assert "--- NOT SHOWN IN FULL ---" in ANSWER_SYSTEM
+    assert "NEVER quote either marker" in ANSWER_SYSTEM

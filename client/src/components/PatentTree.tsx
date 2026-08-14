@@ -29,6 +29,9 @@ export interface PatentTreeProps {
   onSelectDocument(id: number): void;
   onSelectVersion(n: number): void;
   onCreate(): void;
+  /** Opens the import dialog. A DIFFERENT job from the chat panel's .txt drop zone,
+   *  which attaches a file as reference material and never creates anything. */
+  onImport(): void;
   onRenameDocument(id: number, title: string): Promise<string | null>;
   onRenameVersion(n: number, name: string): Promise<string | null>;
   onPageDocuments(offset: number): void;
@@ -70,6 +73,7 @@ export default function PatentTree({
   onSelectDocument,
   onSelectVersion,
   onCreate,
+  onImport,
   onRenameDocument,
   onRenameVersion,
   onPageDocuments,
@@ -91,14 +95,26 @@ export default function PatentTree({
             selection. Ungated, pressing Save then New patent opens the dirty
             dialog with all four buttons disabled — a modal the user cannot
             answer. */}
-        <button
-          type="button"
-          disabled={selectDisabled}
-          onClick={onCreate}
-          className="focus-ring flex items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-0.5 text-[0.6875rem] font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-50 disabled:opacity-50"
-        >
-          <span aria-hidden="true">+</span> New patent
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            disabled={selectDisabled}
+            onClick={onCreate}
+            className="focus-ring flex items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-0.5 text-[0.6875rem] font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-50 disabled:opacity-50"
+          >
+            <span aria-hidden="true">+</span> New patent
+          </button>
+          {/* Gated identically, and for the same reason: an import opens what it
+              creates, so it is a selection. */}
+          <button
+            type="button"
+            disabled={selectDisabled}
+            onClick={onImport}
+            className="focus-ring flex items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-0.5 text-[0.6875rem] font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-50 disabled:opacity-50"
+          >
+            <span aria-hidden="true">↥</span> Import .txt
+          </button>
+        </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">

@@ -24,7 +24,7 @@ from typing import Protocol
 from app.ai import prompts
 from app.ai import verify as vf
 from app.ai.document import REF_RE, Claim, ParsedDocument, block_text
-from app.ai.outline import build_context, claims_excerpt
+from app.ai.outline import STOPWORDS, build_context, claims_excerpt, tokens
 from app.ai.prompts import Selection, render_critique
 from app.ai.schemas import (
     Answer,
@@ -274,19 +274,10 @@ def _understand(llm: LlmBundle, state: dict) -> dict:
 
 # --------------------------------------------------------------------------- retrieve
 
-# ~40 common English words. Kept as a literal rather than pulled from a library: it is
-# read once, in a lexical-overlap score, and a dependency for forty strings is a joke.
-STOPWORDS = frozenset(
-    """a an and are as at be but by can could do does for from has have how i if in
-    into is it its me my of on or please should so than that the their them then there
-    these they this to was were what when where which who will with would you your""".split()
-)
-
-_WORD_RE = re.compile(r"[a-z0-9]+")
-
-
-def tokens(text: str) -> set[str]:
-    return set(_WORD_RE.findall(text.lower()))
+# `STOPWORDS` and `tokens` moved to `outline.py`, which needs them to rank sections
+# against the question and may not import this module. They are imported above rather
+# than duplicated, so `nodes.tokens` still resolves for every existing caller and there
+# is still exactly one word list.
 
 
 def is_dependent(claim: Claim) -> bool:
@@ -381,14 +372,24 @@ def _retrieve(state: dict) -> dict:
             state["prior_art"], tokens(instr), cap=settings.max_context_chars
         )
 
-    # 6. THE CLAIM TEXT ITSELF — full, never the outline's 240-char lines. On the `answer`
-    #    branch the question can be about anything, so the whole document goes in; on the
-    #    generative branch the picked claims go in AT FULL LENGTH, because `draft` and
-    #    `judge` are the two nodes that must read the exact words they are rewriting or
-    #    checking. 4Z proved live what happens otherwise (§20.7 failure A, §21.6).
-    claims_text = (
-        build_context(doc) if u.intent == "answer" else claims_excerpt(doc, sorted(picked))
-    )
+    # 6. THE TEXT ITSELF — full, never the outline's 240-char lines. On the GENERATIVE
+    #    branch the picked claims go in AT FULL LENGTH, because `draft` and `judge` are
+    #    the two nodes that must read the exact words they are rewriting or checking. 4Z
+    #    proved live what happens otherwise (§20.7 failure A, §21.6).
+    #    On the `answer` branch the question can be about anything, so `build_context`
+    #    decides what the model needs to read: the whole document when it fits, and
+    #    otherwise the claims plus the description paragraphs this question actually
+    #    scores against — with everything it could not fit NAMED, never dropped in
+    #    silence. The names come back out as a warning, in `_verify`.
+    if u.intent == "answer":
+        view = build_context(
+            doc, tokens(instr) - STOPWORDS, max_chars=settings.max_answer_context_chars
+        )
+        claims_text, omitted = view.text, list(view.omitted)
+        matched, headed = view.matched, view.headed
+    else:
+        claims_text, omitted = claims_excerpt(doc, sorted(picked)), []
+        matched, headed = True, True
 
     _node_log(
         "retrieve",
@@ -397,6 +398,8 @@ def _retrieve(state: dict) -> dict:
         claims_retrieved=len(picked),
         claims_chars=len(claims_text),
         excerpt_chars=len(excerpt),
+        # A COUNT, never the headings: a section title is the customer's own words.
+        sections_omitted=len(omitted),
     )
     return {
         "retrieved": Retrieved(
@@ -405,6 +408,9 @@ def _retrieve(state: dict) -> dict:
             outline=state["outline"],
             prior_art_excerpt=excerpt,
             prior_art_truncated=len(excerpt) < len(state["prior_art"]),
+            omitted_sections=omitted,
+            context_matched=matched,
+            context_headed=headed,
         )
     }
 
@@ -563,10 +569,23 @@ def _verify(state: dict) -> dict:
         # The unpack that keeps `verify.py` free of `schemas.py` (§19.5). One line, in the
         # layer that already owns `Answer`.
         cites = [(c.kind, c.ref, c.quote) for c in ans.citations]
+        # An answer built from part of the document always says which part it could not
+        # read. `.get` with a default because `retrieve` is skipped on some paths and a
+        # KeyError inside the terminal node is a 502 with nothing a user could act on.
+        retrieved = state.get("retrieved")
+        limits = (
+            vf.partial_context_warning(
+                retrieved.omitted_sections,
+                matched=retrieved.context_matched,
+                headed=retrieved.context_headed,
+            )
+            if retrieved is not None
+            else []
+        )
         return {
             "status": "answer",
             "message": ans.text,
-            "warnings": vf.check_citations(state["doc"], cites),
+            "warnings": vf.check_citations(state["doc"], cites) + limits,
             "citations": vf.verified_claim_refs(state["doc"], cites),
             "operations": [],
         }

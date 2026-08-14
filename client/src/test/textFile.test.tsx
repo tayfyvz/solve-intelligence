@@ -5,12 +5,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import TxtDropZone from "../components/TxtDropZone";
 import {
-  readContextFile,
+  readTextFile,
   readDroppedFiles,
-  validateContextText,
-  type ContextFile,
-  type ContextFileResult,
-} from "../contextFile";
+  validateTextFile,
+  type TextFile,
+  type TextFileResult,
+} from "../textFile";
 
 const txt = (name: string, content: string) => new File([content], name, { type: "text/plain" });
 
@@ -29,29 +29,29 @@ afterEach(() => vi.restoreAllMocks());
 
 // F1. Every content rule, by its exact message. The messages are the feature — a
 // user who drops a UTF-16 file needs to be told that, not "something went wrong".
-describe("F1 validateContextText rules", () => {
-  const cases: { label: string; run: () => ContextFileResult | Promise<ContextFileResult>; expected: ContextFileResult }[] = [
+describe("F1 validateTextFile rules", () => {
+  const cases: { label: string; run: () => TextFileResult | Promise<TextFileResult>; expected: TextFileResult }[] = [
     {
       label: "rule 2 — a non-.txt name is named in the message",
-      run: () => validateContextText("report.pdf", "hello", 5),
+      run: () => validateTextFile("report.pdf", "hello", 5),
       expected: {
         ok: false,
-        error: 'Only .txt files are supported. "report.pdf" was not attached.',
+        error: 'Only .txt files are supported, and "report.pdf" is not one.',
       },
     },
     {
       label: "rule 5 — a file of only a BOM is empty, not three bytes of content",
-      run: () => validateContextText("notes.txt", "\uFEFF", 3),
+      run: () => validateTextFile("notes.txt", "\uFEFF", 3),
       expected: { ok: false, error: "That file is empty." },
     },
     {
       label: "rule 5 — whitespace only is empty",
-      run: () => validateContextText("notes.txt", "  \r\n \t ", 7),
+      run: () => validateTextFile("notes.txt", "  \r\n \t ", 7),
       expected: { ok: false, error: "That file is empty." },
     },
     {
       label: "rule 6 — a NUL byte is not UTF-8 text",
-      run: () => validateContextText("notes.txt", "prior\u0000art", 9),
+      run: () => validateTextFile("notes.txt", "prior\u0000art", 9),
       expected: {
         ok: false,
         error: "That file isn't valid UTF-8 text. Please save it as UTF-8 and try again.",
@@ -59,7 +59,7 @@ describe("F1 validateContextText rules", () => {
     },
     {
       label: "rule 6 — U+FFFD is what a mis-decoded UTF-16 file looks like",
-      run: () => validateContextText("notes.txt", "prior\uFFFDart", 9),
+      run: () => validateTextFile("notes.txt", "prior\uFFFDart", 9),
       expected: {
         ok: false,
         error: "That file isn't valid UTF-8 text. Please save it as UTF-8 and try again.",
@@ -67,12 +67,12 @@ describe("F1 validateContextText rules", () => {
     },
     {
       label: "accept — the BOM is stripped from the text, and `bytes` stays what was measured",
-      run: () => validateContextText("notes.txt", "\uFEFFPrior art.", 13),
+      run: () => validateTextFile("notes.txt", "\uFEFFPrior art.", 13),
       expected: { ok: true, file: { name: "notes.txt", text: "Prior art.", bytes: 13 } },
     },
     {
       label: "accept — CRLF and lone CR normalise, interior indentation survives",
-      run: () => validateContextText("notes.txt", "a\r\n  b\rc", 8),
+      run: () => validateTextFile("notes.txt", "a\r\n  b\rc", 8),
       expected: { ok: true, file: { name: "notes.txt", text: "a\n  b\nc", bytes: 8 } },
     },
     {
@@ -99,11 +99,11 @@ it("F2 oversize and folder drops are rejected without reading", async () => {
   const spy = vi.spyOn(FileReader.prototype, "readAsText");
   const oversize = txt("huge.txt", "x".repeat(50_000));
 
-  expect(await readContextFile(oversize)).toEqual({
+  expect(await readTextFile(oversize)).toEqual({
     ok: false,
     error: "That file is 50.0 kB. The limit is 40,000 characters.",
   });
-  expect(await readContextFile(folder("prior-art.txt"))).toEqual({
+  expect(await readTextFile(folder("prior-art.txt"))).toEqual({
     ok: false,
     error: "Folders can't be attached. Please drop a single .txt file.",
   });
@@ -173,7 +173,7 @@ describe("F6 a FileReader error resolves, never rejects", () => {
   it.each(failures)("%s", async (_label, fire) => {
     stubReader(fire);
 
-    await expect(readContextFile(txt("notes.txt", "Prior art."))).resolves.toEqual({
+    await expect(readTextFile(txt("notes.txt", "Prior art."))).resolves.toEqual({
       ok: false,
       error: "Could not read that file.",
     });
@@ -194,8 +194,8 @@ it("F7 a dropped folder is named precisely", async () => {
 });
 
 /** The chip is owned by the parent, so clearing it has to be a real state change. */
-function Harness({ onAttach }: { onAttach: (file: ContextFile) => void }) {
-  const [file, setFile] = useState<ContextFile | null>(null);
+function Harness({ onAttach }: { onAttach: (file: TextFile) => void }) {
+  const [file, setFile] = useState<TextFile | null>(null);
   return (
     <TxtDropZone
       file={file}

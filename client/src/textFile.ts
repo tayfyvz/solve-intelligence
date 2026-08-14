@@ -1,19 +1,40 @@
 /**
+ * One set of `.txt` rules, two jobs.
+ *
+ * A dropped `.txt` can be either REFERENCE MATERIAL for the AI (the chat panel's drop
+ * zone — the server never stores it) or a PATENT TO IMPORT (the import dialog — it becomes
+ * a document). The name, folder, encoding, BOM and NUL rules are identical for both and
+ * live here once; only the size limit differs, so it is the one thing passed in.
+ */
+export interface TextFileLimit {
+  maxBytes: number;
+  /** How the limit is worded when a file exceeds it, in the units the SERVER measures. */
+  label: string;
+}
+
+/**
  * The client measures FILE BYTES (`file.size`); the server measures CHARACTERS
  * (`len(context_text)`). UTF-8 bytes >= chars, so this check is strictly stricter than the
  * server's and nothing that passes here can 413 there. Same number, different units —
- * deliberately, and the message quotes the server's units so the two never disagree on screen.
+ * deliberately, and the label quotes the server's units so the two never disagree on screen.
  */
-export const MAX_CONTEXT_BYTES = 40_000;
+export const CONTEXT_LIMIT: TextFileLimit = { maxBytes: 40_000, label: "40,000 characters" };
 
-export interface ContextFile {
+/**
+ * Import is bounded by the SAVE cap, not the AI cap: an imported patent is stored, and a
+ * file that passed a 40,000-character check would reject a perfectly ordinary 60-page
+ * patent. `max_content_bytes` on the server is the same 1,000,000, and it too is bytes.
+ */
+export const IMPORT_LIMIT: TextFileLimit = { maxBytes: 1_000_000, label: "1,000,000 bytes" };
+
+export interface TextFile {
   name: string;
   /** BOM-stripped, newline-normalised. Interior whitespace untouched. */
   text: string;
   bytes: number;
 }
 
-export type ContextFileResult = { ok: true; file: ContextFile } | { ok: false; error: string };
+export type TextFileResult = { ok: true; file: TextFile } | { ok: false; error: string };
 
 const ARITY_ERROR = "Please drop one .txt file at a time.";
 const FOLDER_ERROR = "Folders can't be attached. Please drop a single .txt file.";
@@ -35,22 +56,23 @@ export function formatBytes(bytes: number): string {
 
 const isTxtName = (name: string) => name.toLowerCase().endsWith(".txt");
 
-const oversizeError = (bytes: number) =>
-  // Bytes in, characters out. The `40,000` half is a literal so it always matches
-  // the server's own 413 text.
-  `That file is ${formatBytes(bytes)}. The limit is 40,000 characters.`;
+const oversizeError = (bytes: number, limit: TextFileLimit) =>
+  // Bytes in, the server's own units out, so the sentence a user reads here is the
+  // sentence the server would have sent.
+  `That file is ${formatBytes(bytes)}. The limit is ${limit.label}.`;
 
 /** Pure. Every content rule lives here, so it unit-tests without the File API. */
-export function validateContextText(
+export function validateTextFile(
   name: string,
   raw: string,
   byteLength: number,
-): ContextFileResult {
+  limit: TextFileLimit = CONTEXT_LIMIT,
+): TextFileResult {
   if (!isTxtName(name)) {
-    return { ok: false, error: `Only .txt files are supported. "${name}" was not attached.` };
+    return { ok: false, error: `Only .txt files are supported, and "${name}" is not one.` };
   }
-  if (byteLength > MAX_CONTEXT_BYTES) {
-    return { ok: false, error: oversizeError(byteLength) };
+  if (byteLength > limit.maxBytes) {
+    return { ok: false, error: oversizeError(byteLength, limit) };
   }
 
   // Strip one leading BOM, then normalise newlines. Interior whitespace is left
@@ -74,10 +96,13 @@ export function validateContextText(
   return { ok: true, file: { name, text, bytes: byteLength } };
 }
 
-/** Rules 2-4 (name/folder/size) run BEFORE any read; then FileReader, then validateContextText. */
-export async function readContextFile(file: File): Promise<ContextFileResult> {
+/** Rules 2-4 (name/folder/size) run BEFORE any read; then FileReader, then validateTextFile. */
+export async function readTextFile(
+  file: File,
+  limit: TextFileLimit = CONTEXT_LIMIT,
+): Promise<TextFileResult> {
   if (!isTxtName(file.name)) {
-    return { ok: false, error: `Only .txt files are supported. "${file.name}" was not attached.` };
+    return { ok: false, error: `Only .txt files are supported, and "${file.name}" is not one.` };
   }
   // Rule 3 before rule 4: a dropped folder has `size === 0`, which *passes* the size
   // check, and `readAsText` on a directory entry rejects — the user would get
@@ -86,8 +111,8 @@ export async function readContextFile(file: File): Promise<ContextFileResult> {
     return { ok: false, error: FOLDER_ERROR };
   }
   // Checked before reading, so a 2 GB .txt is never pulled into memory.
-  if (file.size > MAX_CONTEXT_BYTES) {
-    return { ok: false, error: oversizeError(file.size) };
+  if (file.size > limit.maxBytes) {
+    return { ok: false, error: oversizeError(file.size, limit) };
   }
 
   // Resolves, never rejects, so no caller needs a `try`.
@@ -100,15 +125,16 @@ export async function readContextFile(file: File): Promise<ContextFileResult> {
   });
   if (text === null) return { ok: false, error: READ_ERROR };
 
-  return validateContextText(file.name, text, file.size);
+  return validateTextFile(file.name, text, file.size, limit);
 }
 
-/** Rule 1 (arity) then readContextFile. Shared by the drop handler and the file input. */
+/** Rule 1 (arity) then readTextFile. Shared by the drop handler and the file input. */
 export async function readDroppedFiles(
   files: FileList | File[] | null,
-): Promise<ContextFileResult> {
+  limit: TextFileLimit = CONTEXT_LIMIT,
+): Promise<TextFileResult> {
   if (!files || files.length !== 1) {
     return { ok: false, error: ARITY_ERROR };
   }
-  return readContextFile(files[0]);
+  return readTextFile(files[0], limit);
 }

@@ -1,4 +1,4 @@
-import type { ContextFile } from "../../contextFile";
+import type { TextFile } from "../../textFile";
 import TxtDropZone from "../TxtDropZone";
 
 export interface ContextChipsProps {
@@ -7,8 +7,8 @@ export interface ContextChipsProps {
   onClearSelection(): void;
   /** Hovering the chip paints the range in the document; leaving clears it. */
   onHoverSelection(hovering: boolean): void;
-  file: ContextFile | null;
-  onAttach(file: ContextFile): void;
+  file: TextFile | null;
+  onAttach(file: TextFile): void;
   onReject(message: string): void;
   onClearFile(): void;
   disabled: boolean;
