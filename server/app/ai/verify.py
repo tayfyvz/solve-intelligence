@@ -51,6 +51,49 @@ W_NO_CLAIMS = "The edit removed every claim from the document."
 
 W_UNVERIFIED_QUOTE = 'The AI quoted "{quote}" as {where}, but that text is not in this document.'
 
+# The same catch, told honestly. A quote that is not in the document but IS one of this
+# program's own placeholders is not the model inventing a quotation — it is the model
+# faithfully reading a marker we put in front of it because the document did not fit.
+# Blaming it for a hallucination leaks an internal string and gives the user nothing to
+# do; naming the real limit gives them the next move.
+W_QUOTED_SCAFFOLD = (
+    "Part of that answer rests on a placeholder marking text I was not shown, not on the "
+    "document itself. Ask about a specific section by name and I will read that part."
+)
+
+W_PARTIAL_CONTEXT = (
+    "This document is too long for me to read in one go, so I did not see all of: {what}. "
+    "Ask about one of those by name and I will read that part."
+)
+
+# Same fact, different advice, because "ask about a section by name" is unfollowable when
+# the document has no headings — and a user who tries makes it WORSE: the words in
+# "the opening text (no heading)" match nothing, so the question scores lower than the one
+# they asked first. Quoting a phrase is the one instruction that always works against a
+# lexical score, because it guarantees a non-zero overlap.
+W_PARTIAL_NO_HEADINGS = (
+    "This document is too long for me to read in one go, and it has no section headings to "
+    "aim at. Quote a phrase from the part you mean and I will find it."
+)
+
+# The most misleading case, and the one that was silent. When NOTHING in the question
+# matched the document's wording — "priming volume" against a document that says "fill
+# volume", or any "summarise this" — what the model was shown was chosen by POSITION, not
+# by relevance. Saying only "I did not see all of X" is literally true and implies the
+# opposite of the truth: that the parts it did see were the relevant ones.
+W_NO_MATCH = (
+    "None of the words in your question appear in this document, so I read it from the "
+    "start rather than searching. Try the document's own wording, or quote a phrase from it."
+)
+
+MAX_LABELS_IN_MESSAGE = 5
+
+# Every placeholder this program inserts into the model's context has this shape: a
+# square-bracketed span between horizontal ellipses. `outline.OMITTED_MARK` is the only
+# thing that produces one, and VF-SCAFFOLD asserts the two agree — an import would give
+# this module a second dependency for one regex, and the docstring above is worth more.
+SCAFFOLD_RE = re.compile(r"\[\s*….*?…\s*\]", re.S)
+
 
 @dataclass  # NOT frozen: frozen=True on a class with two list fields freezes only the
 class VerifyReport:  # rebinding, not the lists, while synthesising a __hash__ that
@@ -218,11 +261,51 @@ def check_citations(doc: ParsedDocument, citations: Iterable[Cite]) -> list[str]
     unverifiable prior-art quote reaches the user only inside the prose, where the model
     already said where it came from.
     """
-    return [
-        W_UNVERIFIED_QUOTE.format(quote=_snip(quote), where=_where(kind, ref))
+    out = [
+        W_QUOTED_SCAFFOLD
+        if SCAFFOLD_RE.search(quote)
+        else W_UNVERIFIED_QUOTE.format(quote=_snip(quote), where=_where(kind, ref))
         for kind, ref, quote in citations
         if kind in ("claim", "section") and not _quote_found(doc, quote)
     ]
+    # Deduplicated: W_QUOTED_SCAFFOLD carries no quote, so three citations that all
+    # picked up a marker would otherwise print the same sentence three times.
+    return list(dict.fromkeys(out))
+
+
+def partial_context_warning(
+    omitted: Iterable[str], *, matched: bool = True, headed: bool = True
+) -> list[str]:
+    """What the user is told when the model read only part of their document.
+
+    Empty when the whole document was read, which — since the answer budget holds a
+    37-page patent — is the common case. It has to stay empty there: a warning on every
+    answer is a warning nobody reads.
+
+    Three sentences rather than one, because the same omission means three different
+    things and only one of them is "ask about that section":
+
+    * `matched=False` — the question's words appear nowhere, so the selection was made by
+      POSITION. This one goes FIRST, because it changes what the rest means.
+    * `headed=False`  — there are no section names to ask about.
+    * otherwise       — name a section and it will be read.
+
+    This is the counterpart of `check_citations`: that one fires when the model quoted
+    something it should not have, this one fires whether or not it did — a model that
+    silently answers from the front of the document is the case that needs saying most.
+    """
+    labels = list(dict.fromkeys(label for label in omitted if label))
+    if not labels:
+        return []
+    if not headed:
+        which = [W_PARTIAL_NO_HEADINGS]
+    else:
+        shown = labels[:MAX_LABELS_IN_MESSAGE]
+        what = ", ".join(f'"{label}"' for label in shown)
+        if len(labels) > len(shown):
+            what += f" and {len(labels) - len(shown)} more"
+        which = [W_PARTIAL_CONTEXT.format(what=what)]
+    return ([] if matched else [W_NO_MATCH]) + which
 
 
 def verified_claim_refs(doc: ParsedDocument, citations: Iterable[Cite]) -> list[int]:

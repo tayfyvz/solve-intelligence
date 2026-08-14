@@ -15,7 +15,7 @@ import app.models  # noqa: F401
 from app.config import get_settings
 from app.crud import seed_if_empty
 from app.db import SessionLocal, init_db
-from app.routers import ai, documents
+from app.routers import ai, documents, imports
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +180,7 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
     # the CORS spec and browsers reject the pairing outright.
     application.include_router(documents.router)
     application.include_router(ai.router)
+    application.include_router(imports.router)
 
     @application.get("/api/health")
     def health() -> dict[str, str]:

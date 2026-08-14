@@ -26,7 +26,7 @@ PATH_PARAMS = {"id": "document_id", "versionNumber": "version_number"}
 # whole file pass while guarding nothing, so the counts are asserted too.
 # list, create, get, rename document; list, get, create, update, rename version;
 # POST /api/ai/chat; POST /api/ai/apply.
-EXPECTED_ROUTES = 11
+EXPECTED_ROUTES = 12
 EXPECTED_TYPES = {
     "DocumentSummary",
     "DocumentDetail",
@@ -46,6 +46,8 @@ EXPECTED_TYPES = {
     "AiChatResponse",
     "AiApplyRequest",
     "AiApplyResponse",
+    "TextImportRequest",
+    "TextImportResult",
 }
 
 _CALL = re.compile(r"\b\w*[Hh]ttp\.(get|post|put|delete|patch)\(\s*[`\"']([^`\"']*)[`\"']")

@@ -9953,12 +9953,14 @@ for the same reason: **it can only count what a table row declares.** A phase wh
 "harden what exists" still needs somewhere to declare what it added.
 
 **A note on this number versus what `pytest`/`vitest` print.** This section counts **gate rows** —
-specified, named behaviours. The suites report **558 backend and 226 frontend test functions**,
+specified, named behaviours. The suites report **611 backend and 253 frontend test functions**,
 because a single gate row is frequently a `parametrize`/`it.each` covering several cases (one 404
 row over five routes, one exception→status table, one file-validation matrix). The two numbers
-measure different things and are both correct; **340 is the number this document owns**, and 784 is
+measure different things and are both correct; **340 is the number this document owns**, and 864 is
 the number the runners own. *(708 → 784: **+76** regression tests added by the QA hardening pass,
-one or more for each defect it found. That pass added no gate rows, so the 340 is unchanged.)* *(325 → 329: **+3** for the bullet-defined gate tests the extraction missed, and **+1**
+one or more for each defect it found. That pass added no gate rows, so the 340 is unchanged.
+784 → 864: **+80** for the long-patent work — §34 — for the same reason and with the same
+consequence for the 340.)* *(325 → 329: **+3** for the bullet-defined gate tests the extraction missed, and **+1**
 for **`G19`**, the test of `recursion_limit` and its `GraphRecursionError` copy — a bound §3.4
 presented as one of three independently sufficient mechanisms, with a user-facing sentence, that
 nothing executed. 329 → 330 at 4C: **+1** for the no-plan companion row, §22.13 row 13.)*
@@ -10092,3 +10094,79 @@ already-identified bug ship.
 | 14 | The `understand` node never receives the uploaded file's contents | `U14`, `L8` |
 | 15 | `ChatPanel` never writes `dirty` | grep gate (§26.10) + `CP-06` |
 | 16 | Every AI apply is preceded by a drift check — the server's digest on the proposal path, the client's `sentHtml` comparison on the consented path | `R5`, `CP-14` |
+
+---
+
+## 34. Long patents — navigation, whole-document Q&A, and `.txt` import
+
+Added after the QA hardening pass, on a brief measured against a real 37-page application
+(112,659 characters, 60 claims, 89 description paragraphs) rather than against the two
+two-screen seeds. **+80 tests (784 → 864: 611 backend, 253 frontend).** No gate rows: this
+section is the declaration, in the same spirit as §31.2's note about the hardening pass.
+
+### 34.1 What was wrong
+
+| # | Defect | Found by |
+|---|---|---|
+| 1 | `build_context` tier 3 replaced the whole description with `(omitted — 89 paragraphs)`; the model quoted the placeholder and the verifier reported it as an invented quotation | the brief |
+| 2 | 37 pages is one 43,262 px scroll with no outline, no jump list and no find | the brief |
+| 3 | `.txt` upload could only attach AI context; an existing patent could not be imported | the brief |
+| 4 | `understand` sees only `build_outline`, so a question about the Background was answered *"please paste the Background text"* — the run ended before `retrieve` ever fetched it | **a live click-through**; no pure test could see it, every node behaved as written |
+| 5 | `ImportPatentDialog` reset `input.value` before reading `event.target.files`, which empties a LIVE FileList — every pick reported "no file" | **the first real click in Chrome**; jsdom's FileList is not live, so all unit tests passed |
+
+### 34.2 The budget, and why it is measured
+
+The 30,000-character Q&A cap was ~7,500 tokens against a model that takes hundreds of
+thousands. `max_answer_context_chars = 120_000` — sized as *the largest real document*, not
+the largest the window permits, so that retrieval stays exercised on the 120k–200k range
+that `max_html_chars` makes reachable by design.
+
+The number is measured, and the measurement **overturned the extrapolation** that a bigger
+prefill would cost latency: at 106,827 characters the `answer` call ran in a median 2.3 s
+against 6.3 s at 30,000, where one call hit the node timeout outright. See CLAUDE.md
+"Verified environment facts". `ai_node_timeout_seconds` is unchanged at 12.0 as a result —
+raising it would have required re-deriving §3.4's whole chain for no measured reason.
+
+### 34.3 Retrieval, and the six defects an adversarial audit found in it
+
+`build_context` above the budget: rank the non-claim paragraphs by word overlap with the
+question, pack to budget, render in document order, name everything left out. Tiered and
+never looped (invariant 10); nothing dropped in silence (invariant 11).
+
+Audited adversarially before shipping. Six defects, each fixed with a test built from its
+own reproduction — L16 through L21:
+
+| # | Defect | Fix |
+|---|---|---|
+| 1 | `_pack` never charged for the `## heading` lines `_render_region` emits, so **every** tier overshot by the same amount and tiers 3/4 could never reach the cut they exist to avoid | charge the worst case up front |
+| 2 | tier 5's blind byte cut **severed the `--- NOT SHOWN IN FULL ---` block**, leaving ANSWER_SYSTEM rule 2b naming a marker the model never got | build the manifest separately, re-attach it after the cut |
+| 3 | a paragraph bigger than the whole budget was **skipped**, so the only paragraph mentioning the question was dropped and "ask about that section by name" could not work | clip the top-ranked paragraph instead |
+| 4 | a question matching nothing degenerated to document order, **byte-identical to asking nothing**; "summarise this patent" saw 1.5 of 5 sections and omitted Summary | round-robin across sections + a `matched` flag the user is told about |
+| 5 | the heading bonus **scaled with heading length**, so naming a long section buried an answer filed elsewhere | cap it at 1 — a tiebreak, not a multiplier |
+| 6 | "ask about a section by name" is **unfollowable with no headings**, and trying made retrieval worse | a different sentence: quote a phrase |
+
+### 34.4 Navigation — and why there is no paginated editor
+
+Evaluated: a true paginated view, virtualised rendering, section/claim jump navigation, a
+hybrid. **Chosen: outline + find, both strictly read-only** (invariant 12). Paginating or
+virtualising a single `contenteditable` breaks invariant 7 and, with it, selection across a
+page boundary, undo, `getHTML()` returning the whole document, and the AI's claim
+resolution. The owner asked for pagination; the trade was put to them with the alternatives
+before anything was built, and the read-only navigator was chosen.
+
+The outline folds a long claim run behind one row and carries a filter — a flat 66-row list
+buried the five headings that say what the document *is*. The editor's measure widens when
+both side panels are collapsed.
+
+### 34.5 Import
+
+`textimport.py` + `POST /api/import/text`, **no `db` parameter** — same enforcement as the AI
+routes. The route converts and reports; the client sends the result to the existing
+`POST /api/documents` or `POST /.../versions`, so import inherits sanitising, size limits and
+409 handling rather than growing a second write path.
+
+Conversion ends with `render(parse(sanitize_html(html)))` — sanitise first so the preview is
+byte-identical to what a save stores. Every judgement is a `note` shown before the patent
+exists; numbering is reported, never repaired. `contextFile.ts` became `textFile.ts` and
+takes its size limit as a parameter, because import is bounded by the **save** cap and chat
+context by the **AI** cap.

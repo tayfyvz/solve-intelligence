@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 
+import { highlightKey, highlightPlugin } from "../ai/highlight";
 import { useDocumentStore } from "../store";
 import Toolbar from "./Toolbar";
 
@@ -69,6 +70,19 @@ export default function Editor({ content }: EditorProps) {
   // null here. The store's clear is identity-guarded, because React can commit the
   // next key's onCreate before this cleanup runs.
   useEffect(() => () => clearEditor(editor), [editor, clearEditor]);
+
+  // The highlight plugin lives HERE, with the editor, because it now has two consumers:
+  // the chat panel's citation flash and the find bar's current match. It used to be
+  // registered by ChatPanel, which is unmounted whenever the chat column is collapsed —
+  // so with chat closed, find would have had nothing to draw on. Both consumers still
+  // just call `paint()`; only the lifecycle moved.
+  useEffect(() => {
+    if (editor.isDestroyed) return;
+    editor.registerPlugin(highlightPlugin());
+    return () => {
+      if (!editor.isDestroyed) editor.unregisterPlugin(highlightKey);
+    };
+  }, [editor]);
 
   return (
     // The toolbar lives inside the scroll container — which is App's div, not this

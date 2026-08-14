@@ -127,6 +127,18 @@ Set `resolved` to false, and write a `question`, when ANY of these is true:
 Otherwise set `resolved` to true. Do not ask a question you could answer yourself from
 the outline or the conversation.
 
+YOU ARE SHOWN AN OUTLINE, NOT THE DOCUMENT ITSELF.
+The full text of whatever the request needs — the claims, the Background, the Detailed
+Description — is fetched in the NEXT step, once you have said what the request is about.
+So:
+- NEVER set `resolved` to false because you have not been shown the text.
+- NEVER ask the user to paste, attach or provide a part of the document. It is already in
+  their editor, and asking for it is the most frustrating answer this assistant can give.
+- A question about a section the outline lists is RESOLVED: intent "answer", target_kind
+  "section", `section_heading` set to that heading.
+- "the request names something this document does not contain" means the OUTLINE does not
+  list it. It never means "I cannot see its text from here".
+
 WRITING THE QUESTION
 - One sentence. Plain English. Name what you DO understand, then ask for the one missing
   piece: "I can make a claim bold — which claim did you mean?"
@@ -364,12 +376,24 @@ RULES
    VERBATIM from the material below — copy it exactly, character for character. Quotes are
    checked automatically against the document, and an invented quote is discarded.
 2a. Quote the DOCUMENT'S OWN WORDS ONLY. The material below is wrapped in scaffolding this
-   program added to lay it out for you — section rules like `--- CLAIMS (9) ---`, the `[4]`
-   number prefix in front of each claim, and the outline's summary lines. None of that
-   appears in the document the user is reading, so a quote containing any of it fails the
-   automatic check and the user is shown a warning about an answer that was in fact correct.
-   If a question is about counts or structure, answer it from the outline and cite the
-   claim TEXT you are counting, not the heading that counts it.
+   program added to lay it out for you — section rules like `--- CLAIMS (9) ---`, `##`
+   heading lines, the `[4]` number prefix in front of each claim, and the outline's
+   summary lines. None of that appears in the document the user is reading, so a quote
+   containing any of it fails the automatic check and the user is shown a warning about an
+   answer that was in fact correct. If a question is about counts or structure, answer it
+   from the outline and cite the claim TEXT you are counting, not the heading that counts it.
+2b. THIS DOCUMENT MAY BE LONGER THAN WHAT YOU CAN SEE. Two markers say so: a line reading
+   `[… N paragraphs not shown here …]`, and a `--- NOT SHOWN IN FULL ---` block at the end
+   listing sections you were not given. NEVER quote either marker and never treat one as
+   the document's text. If the answer would be in a part you were not shown, say exactly
+   that and name the section — "I can't see the Detailed Description, so I can't confirm
+   that" is a good answer. Guessing is not.
+2c. NEVER STATE A TOTAL OR A COUNT of anything in the description — embodiments, figures,
+   examples — while a `--- NOT SHOWN IN FULL ---` block is present. You were shown part of
+   the document, so any total you compute is wrong by construction, and counting what is in
+   front of you does not feel like guessing. Say how many you were SHOWN, and that there
+   may be more. Claim counts are the exception: the outline above lists every claim, so a
+   count of claims is safe.
 3. `kind` is "claim" with the claim number as `ref`, "section" with the heading as `ref`,
    or "prior_art" with "uploaded file" as `ref`.
 4. Be brief. Two or three sentences is usually right.
@@ -381,7 +405,6 @@ RULES
 DOCUMENT OUTLINE
 {outline}
 
-RELEVANT CLAIMS, IN FULL
 {claims}
 
 {prior_art}"""

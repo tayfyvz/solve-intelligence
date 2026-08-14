@@ -33,6 +33,17 @@ class Settings(BaseSettings):
     max_html_chars: int = 200_000  # AI input
     max_instruction_chars: int = 2_000
     max_context_chars: int = 40_000
+    # The Q&A branch's context budget. Large enough that a whole 37-page patent
+    # (~112,000 chars) fits in ONE call, so on every realistic document the model reads
+    # the document rather than a selection from it. MEASURED, not guessed: at a 106,827
+    # char context the `answer` call ran in a median 2.3 s (n=6, min 1.6, max 3.5) —
+    # faster than the same questions at 30,000, where the fragmented context made the
+    # model work harder and one call hit `ai_node_timeout_seconds` outright.
+    # It is NOT `max_html_chars` (200,000): retrieval must stay exercised on the
+    # documents above this, because that range is reachable by design.
+    # `claims_excerpt`'s own 30,000 default is a DIFFERENT budget on a different branch
+    # (up to 5 calls, not 2) and must not be moved with this one.
+    max_answer_context_chars: int = 120_000
     max_history_turns: int = 3
 
     # --- AI, Task 2 ------------------------------------------------------

@@ -11,6 +11,8 @@ import type {
   DocumentRename,
   VersionCreate,
   VersionPage,
+  TextImportRequest,
+  TextImportResult,
   VersionRead,
   VersionRename,
   VersionUpdate,
@@ -180,3 +182,16 @@ export function aiApply(body: AiApplyRequest): Promise<AiApplyResponse> {
  *  NOT 503 (configuration — a retry cannot help) and NOT 409 (the document moved —
  *  the proposal must be re-asked, not retried). */
 export const RETRYABLE_STATUSES: ReadonlySet<number> = new Set([429, 502, 504]);
+
+/**
+ * Converts a `.txt` into the HTML this app stores. Writes NOTHING — the caller sends the
+ * result to `createDocument` or `createVersion`, so import reuses the existing save path
+ * rather than growing a second one with its own sanitising and size limits.
+ *
+ * Uses `http` (15 s), not `aiHttp`: this is pure CPU on the server and never reaches
+ * OpenAI, so it works with no API key configured.
+ */
+export function importText(text: string, filename: string | null): Promise<TextImportResult> {
+  const body: TextImportRequest = { text, filename };
+  return request<TextImportResult>(() => http.post("/api/import/text", body));
+}

@@ -82,7 +82,7 @@ Good luck!
 
 **Both tasks are implemented.** Task 1 is document versioning. Task 2 is Option A: AI-powered
 editing, where the model emits **structured operations** and Python applies them — it never writes
-the document's HTML. **784 tests pass (558 backend, 226 frontend), and none of them needs an API
+the document's HTML. **864 tests pass (611 backend, 253 frontend), and none of them needs an API
 key.**
 
 The rest of this section is the reasoning, because the interesting parts of this submission are
@@ -135,7 +135,9 @@ The pipeline is a small LangGraph state machine — `understand → retrieve →
 judge | answer) → verify`. LangGraph earns its 21 transitive packages on one point: the
 `draft ⇄ judge` cycle is a genuine loop with a retry bound and accumulated critique, and that is
 exactly where hand-managing state in one function stops being the obvious solution. Everything else
-about it is deliberately boring — no checkpointer, no agents, no RAG, no streaming.
+about it is deliberately boring — no checkpointer, no agents, no streaming, and no vector store.
+*(Retrieval is now in scope, and it is thirty lines of word-overlap scoring over the parsed
+document — see "Long patents" below. Nothing is indexed, embedded or persisted.)*
 
 ### Sticky per-version consent
 
@@ -151,6 +153,60 @@ and every one of those two was created by a human clicking Proceed.
 An earlier design gated on operation *kind* (generative vs mechanical). It was wrong in both
 directions: it waved `delete_claim` straight through with no restore point, and it charged a new
 version for each individually bolded claim.
+
+### Long patents — navigating, asking, and importing one
+
+The seed patents are two screens. A real application is thirty-seven pages, and three things
+break at that size — measured on a 112,659-character patent with 60 claims and 89 description
+paragraphs.
+
+**1. The AI could only see the claims, and said so in the worst possible way.** The Q&A context
+builder replaced the entire description with the literal string `(omitted — 89 paragraphs)`, and
+the model — asked about the Background — quoted that placeholder. The citation verifier caught it,
+which is the system working correctly; what the user then read was *"The AI quoted "(omitted — 89
+paragraphs)" … but that text is not in this document"* — an accusation about a string this program
+wrote itself, with no next step in it.
+
+The first fix was not retrieval — it was the budget. 30,000 characters is ~7,500 tokens against a
+model that takes hundreds of thousands, so the cliff was self-inflicted. The answer budget is now
+120,000, and the number was **measured**: at a 106,827-character context the call runs in a median
+2.3 s, *faster* than the same questions at 30,000, where a fragmented context made the model work
+harder and one call hit the node timeout outright. A 37-page patent now goes to the model whole.
+
+Retrieval is what happens **above** that budget, which the 200,000-character input ceiling makes
+reachable by design. `build_context` ranks the description's paragraphs by word overlap with the
+question, packs them to the budget, and renders them in document order — five tiers, evaluated and
+never looped, so the same document and question produce the same context byte for byte. Whatever did
+not fit is **named**, inline and in a warning the user reads, in one of three forms depending on
+whether there are sections to name and whether the question matched anything at all. An adversarial
+audit of that mechanism found six defects — a packer that never charged for its own headings, a hard
+cut that severed the very manifest the prompt promised, a paragraph too big to fit being dropped
+rather than clipped — all fixed, each with a test built from its reproduction. `DESIGN.md` §5.6a has
+the detail, including what was rejected (embeddings, a summarisation pass) and why.
+
+**2. Thirty-seven pages is one continuous 43,262-pixel scroll.** Load is 203 ms and typing is
+0.16 ms/char, so performance was never the problem — navigation was. There is now a **document map**
+(every heading, with the claims folded behind one row until you want them, plus a filter) and a
+**find bar** with next/previous and a live count. Claim 60 is one click instead of 43 screens.
+
+Both are deliberately **read-only**: they read `editor.state.doc` and call `scrollIntoView`, and the
+only transaction either sends is the cosmetic highlight, which cannot reach the dirty flag. A true
+paginated or virtualised `contenteditable` would have bought a page number at the cost of selection
+across a page boundary, undo, `getHTML()` returning the whole document, and the AI's claim
+resolution. That trade was declined on purpose; the tests assert the document and the dirty flag are
+untouched after navigating.
+
+**3. Patents already exist, and they arrive as `.txt`.** `Import .txt` converts one into a patent —
+or into a new version of the open one. Conversion runs on the **server**, because the definition of
+"a claim" lives in the Python parser and a second definition in TypeScript would drift from it; the
+route takes no `db` parameter, so import reuses the existing save path rather than growing a second
+one. What comes back is byte-identical to what a save will store, and every judgement the importer
+had to make is shown **before** the patent exists: no Claims heading found, duplicate numbers, gaps,
+claims out of order, a file that is not a patent at all. Numbering is reported, never repaired.
+
+The same file type now does two different jobs, so both say which one you are in: dropped on the
+**chat panel** a `.txt` is reference material the AI reads and the server never stores; dropped on
+the **import dialog** it becomes a patent.
 
 ### The four layers that make an unproven LLM acceptable in a legal document
 
@@ -272,7 +328,7 @@ acknowledgement concludes we did not look.
 
 ## Testing
 
-**784 tests, and zero of them require an API key.** They target meaningful behaviour rather than a
+**864 tests, and zero of them require an API key.** They target meaningful behaviour rather than a
 coverage number.
 
 - The **parse → render → parse round-trip on both seed patents** is the safety net the whole AI

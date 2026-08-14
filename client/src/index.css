@@ -248,6 +248,14 @@ div#root {
     }
   }
 
+  /* Set by App when BOTH side panels are collapsed: the reclaimed column is real estate
+     the reader asked for, so the paper grows into it. It stops at 60rem rather than
+     filling the pane, because the 72-characters-a-line reason above does not stop being
+     true when the sidebars close — past ~100 characters, claim prose is unreadable. */
+  .editor-wide .editor {
+    max-width: 60rem;
+  }
+
   /* Document typography. There is no @tailwindcss/typography plugin here, so `prose` does not
      exist; these few rules are cheaper than the dependency. `.editor` is the class the TipTap
      editor element carries. */

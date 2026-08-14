@@ -29,7 +29,7 @@ from app.ai.graph import (
     run_plan_initial_state_keys,
 )
 from app.ai.nodes import DEADLINE_MESSAGE, JUDGE_SKIPPED_NOTE
-from app.ai.outline import build_context, claims_excerpt
+from app.ai.outline import STOPWORDS, build_context, claims_excerpt, tokens
 from app.ai.schemas import Answer, Citation, EditPlan, JudgeVerdict, Op, authors_new_text
 from app.data import SEED_DOCUMENTS
 from tests.fakes import (
@@ -406,12 +406,12 @@ def test_question_with_no_file_attached() -> None:
             Citation(kind="claim", ref="7", quote="a quote this document does not contain"),
         ],
     )
-    terminal, rec = go_terminal(
-        "what does claim 4 depend on?", members={**ANSWER, "answer": answer}
-    )
+    question = "what does claim 4 depend on?"
+    terminal, rec = go_terminal(question, members={**ANSWER, "answer": answer})
 
     retrieved = rec.args_for("answer")[0].args[1]
-    assert retrieved.claims_text == build_context(doc)
+    assert retrieved.claims_text == build_context(doc, tokens(question) - STOPWORDS).text
+    assert retrieved.omitted_sections == []  # a seed fits whole; nothing was left out
     assert retrieved.prior_art_excerpt == ""
     assert prompts.prior_art_block_from(retrieved) == ""
 
