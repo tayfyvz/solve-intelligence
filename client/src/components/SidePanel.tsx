@@ -1,8 +1,8 @@
 import { type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 /** Narrow enough to still read a patent title, wide enough not to eat the editor. */
-export const MIN_WIDTH = 200;
-export const MAX_WIDTH = 520;
+const MIN_WIDTH = 200;
+const MAX_WIDTH = 520;
 /** One arrow press. Big enough to be worth pressing, small enough to be precise. */
 const STEP = 24;
 

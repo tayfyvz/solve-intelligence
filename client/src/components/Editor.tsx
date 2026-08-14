@@ -11,7 +11,6 @@ const extensions = [StarterKit];
 export interface EditorProps {
   /** Initial content only. The component is remounted per document/version. */
   content: string;
-  className?: string;
 }
 
 /**
@@ -29,7 +28,7 @@ export interface EditorProps {
  * `${documentId}:${versionNumber}`, which loads the new content and resets the
  * caret in one mechanism.
  */
-export default function Editor({ content, className }: EditorProps) {
+export default function Editor({ content }: EditorProps) {
   const setEditor = useDocumentStore((s) => s.setEditor);
   const clearEditor = useDocumentStore((s) => s.clearEditor);
   const setDirty = useDocumentStore((s) => s.setDirty);
@@ -66,10 +65,10 @@ export default function Editor({ content, className }: EditorProps) {
   useEffect(() => () => clearEditor(editor), [editor, clearEditor]);
 
   return (
-    // The toolbar lives inside the scroll container and is `sticky`, so it stays
-    // reachable while reading a long claim set without the parent having to know
-    // anything about it — `className` is still exactly the scrolling pane it was.
-    <div className={className}>
+    // The toolbar lives inside the scroll container — which is App's div, not this
+    // one — and is `sticky`, so it stays reachable while reading a long claim set
+    // without the parent having to know anything about it.
+    <div>
       <Toolbar editor={editor} />
       <EditorContent editor={editor} />
     </div>
