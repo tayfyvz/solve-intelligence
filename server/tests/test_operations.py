@@ -1,4 +1,4 @@
-"""O1-O11 — the six operations, called directly.
+"""O1-O11 — the seven operations, called directly.
 
 These call the pure functions against `parse(SEED_1)` and assert on `render(doc)`; they
 do not go through `apply_plan`, which is 3C. The point of every row is the same one: an
@@ -17,8 +17,10 @@ from app.ai.operations import (
     W_MULTIPLE_HITS,
     W_NO_ANCHOR,
     W_NO_CLAIM,
+    W_NO_SECTION,
     W_SPLIT_BY_MARKUP,
     delete_claim,
+    delete_section,
     format_claim,
     insert_claim,
     insert_section,
@@ -201,6 +203,48 @@ def test_insert_section_synthesises_a_claims_heading() -> None:
     assert reparsed.claims[0].blocks[0].html == "A device comprising a housing."
 
 
+BACKGROUND_DOC = (
+    "<h1>Background</h1><p>Field of the invention.</p><p>More background text.</p>"
+    "<h1>Claims</h1><p>1. A device.</p>"
+)
+
+
+def test_delete_section_removes_heading_and_body_up_to_next_heading() -> None:
+    """Matched by heading text only, never body text — the planner is never shown a
+    section's body on this path. Stops at the next heading tag."""
+    doc = parse(BACKGROUND_DOC)
+    warnings: list[str] = []
+    delete_section(doc, "Background", warnings)
+    out = render(doc)
+
+    assert "Field of the invention" not in out
+    assert "More background text" not in out
+    assert "<h1>Claims</h1>" in out and "1. A device." in out
+    assert warnings == []
+
+
+def test_delete_section_cannot_reach_the_claims_heading() -> None:
+    """The claims region lives in `doc.claims_heading`, its own field, never in
+    `doc.preamble`/`doc.postamble` — the only two lists delete_section searches. So
+    "delete the Claims section" cannot destroy the patent's claims; it just finds no
+    matching section."""
+    doc = parse(BACKGROUND_DOC)
+    warnings: list[str] = []
+    delete_section(doc, "Claims", warnings)
+
+    assert render(doc) == BACKGROUND_DOC
+    assert warnings == [W_NO_SECTION.format(heading="Claims")]
+
+
+def test_delete_section_with_no_match_warns_and_leaves_document_alone() -> None:
+    doc, _, warnings = seed()
+    before = render(doc)
+    delete_section(doc, "Nonexistent Section", warnings)
+
+    assert render(doc) == before
+    assert warnings == [W_NO_SECTION.format(heading="Nonexistent Section")]
+
+
 def test_replace_text_split_by_markup_warns_and_leaves_it() -> None:
     """O9 — the honest degradation. Cross-tag surgery is impossible to defend live and
     impossible to test exhaustively."""
@@ -241,6 +285,7 @@ def test_replace_text_reports_how_many_it_touched() -> None:
         ),
         lambda d, w, u: replace_claim(d, u[1], "<script>alert(1)</script>", w, requested=1),
         lambda d, w, u: insert_section(d, "<h1>x", [""] * 20, "before_claims", w),
+        lambda d, w, u: delete_section(d, "<script>alert(1)</script>", w),
         lambda d, w, u: replace_text(d, "\x00", "<script>", w),
     ],
 )

@@ -45,12 +45,19 @@ W_DANGLING_REF = "Claim {number} still refers to claim {old}, which was deleted.
 #   replace_text FIRST                 — ARBITRARY. It does not see text this plan
 #       introduced. Chosen so text edits apply to what the user was looking at. A
 #       trade-off, documented as a choice rather than dressed up as a derivation.
+#   delete_section BEFORE insert_section — ARBITRARY, same reason as replace_text: it
+#       only touches `doc.preamble`/`doc.postamble` blocks by heading match, which none
+#       of the four claim-indexed ops above can shift or shadow, so there is no ordering
+#       interaction to be necessary about. It sits just before insert_section so a plan
+#       that deletes one section and adds another still leaves insert_section observing
+#       the final structure last, per A7.
 KIND_ORDER = (
     "replace_text",
     "replace_claim",
     "format_claim",
     "insert_claim",
     "delete_claim",
+    "delete_section",
     "insert_section",
 )
 

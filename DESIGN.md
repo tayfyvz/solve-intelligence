@@ -84,7 +84,7 @@ Confirmed defects, and how the design answers them:
 > originally committed to, the divergence is called out inline rather than silently rewritten —
 > `PLAN.md` §1 and §2 record every decision, and §27.4 records what the Step 6 stress pass
 > overturned. The one structural surprise: `ai/planner.py` never existed. It became eleven modules
-> under `ai/`, for the reason in PLAN §1.2 — one file holding model + parse + render + six
+> under `ai/`, for the reason in PLAN §1.2 — one file holding model + parse + render + seven
 > operations + bind + apply + renumber + remap + verify is 600+ lines and eight concerns, and it is
 > precisely the file an interview centres on and the one you could not walk in sixty seconds.
 
@@ -139,7 +139,7 @@ server/app/
     ├── document.py    # ParsedDocument, parse(), render() — the round-trip contract
     ├── outline.py     # build_outline / build_context / claims_excerpt, and the
     │                  #   question-scoped section retrieval build_context now does
-    ├── operations.py  # the six operations, and KIND_ORDER
+    ├── operations.py  # the seven operations, and KIND_ORDER
     ├── schemas.py     # every model↔engine contract, and require()
     ├── apply.py       # bind → apply → renumber once → remap cross-references
     ├── verify.py      # the deterministic gate on the produced artefact
@@ -295,20 +295,35 @@ delete_claim   (claim_number)
 insert_claim   (after_claim_number, text)          # 0 = before claim 1
 replace_claim  (claim_number, text)                # rewrite / shorten / amend
 insert_section (heading, paragraphs[], position: before_claims|after_claims)
+delete_section (heading)                           # whole section, matched by heading only
 replace_text   (find, replace)                     # document-wide
 ```
 
-**Six operations, not the seven this document first listed.** Two cuts, both in PLAN §1.1:
+**Seven operations.** `delete_section` was cut in PLAN §1.1, then **reinstated on the repo
+owner's explicit direction (2026-08-14): "deletion must be available, no restriction."** The
+model's live behaviour before this — refusing every whole-section deletion in one turn and asking
+the user to paste the exact sentences instead — was a real gap, not a defensible boundary, once
+that direction was given. Reinstating it, the original blocker turned out to be avoidable rather
+than fundamental:
 
-- **`delete_section` was removed.** No requirement asked for it, and its failure mode is
-  *destroying the patent* — which is why it needed a "refuses to delete the Claims heading" guard,
-  a guard that existed only because the operation existed. It also owned one of three ordering
-  rules. *"Rewrite the background"* now returns `needs_clarification`, which is this document's own
-  stated principle rather than an exception to it.
-- **`replace_text` lost its `scope` field.** Nobody asked for claim-scoped find/replace, and it
-  bought a `"claim:N"` string-parsing failure mode. Replacement is document-wide, and when a phrase
-  occurs more than once the operation says so: *"That text appears 8 times; all of them were
-  changed."*
+- **The op is matched by HEADING TEXT ONLY, never body text.** That was the actual blocker the
+  first time — `plan_ops`/`draft` are never shown a section's body, only the outline, so they could
+  not have built a safe `find` string for `replace_text`. `insert_section` already addresses a
+  section by heading, not by content; `delete_section` does the same on the way out.
+- **The "refuses to delete the Claims heading" guard the first cut worried about is now structural,
+  not a special case.** The claims region lives in `ParsedDocument.claims_heading`, a field of its
+  own, never in `preamble`/`postamble` — the only two lists `delete_section` searches. Asking to
+  delete "the Claims section" simply finds no matching section; there is no code path where this op
+  can reach the claims.
+- It still owns one `KIND_ORDER` adjacency (placed just before `insert_section`), but the
+  adjacency is arbitrary, like `replace_text`'s — it touches only heading-tagged blocks in
+  `preamble`/`postamble`, which none of the four claim-indexed operations can shift or shadow, so
+  there was no genuine ordering conflict to resolve.
+
+**`replace_text` still lost its `scope` field**, unrelated to the above: nobody asked for
+claim-scoped find/replace, and it bought a `"claim:N"` string-parsing failure mode. Replacement is
+document-wide, and when a phrase occurs more than once the operation says so: *"That text appears 8
+times; all of them were changed."*
 
 Anything outside this vocabulary returns `needs_clarification` with a message explaining what the
 assistant *can* do. **An unsupported instruction never produces a partial or wrong edit** — that

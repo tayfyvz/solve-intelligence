@@ -44,6 +44,9 @@ export interface DocumentDetail {
 export interface VersionSummary {
   version_number: number;
   name: string;
+  /** "user" for a plain save/import; "ai" for the confirmed result of an AI-proposed
+   *  edit. Set once at creation, never touched by later edits to the same version. */
+  source: "user" | "ai";
   created_at: string;
   updated_at: string;
 }
@@ -54,6 +57,7 @@ export interface VersionRead {
   name: string;
   /** May legitimately be "" — a cleared draft. Never test truthiness. */
   content: string;
+  source: "user" | "ai";
   created_at: string;
   updated_at: string;
 }
@@ -72,6 +76,7 @@ export interface VersionCreate {
   content: string;
   /** null means "let the server name it `Version {n}`". */
   name: string | null;
+  source: "user" | "ai";
 }
 
 /** PUT: content only. Renaming is a different verb, so a save can never rename. */
@@ -107,6 +112,7 @@ export interface AiOperation {
     | "insert_claim"
     | "replace_claim"
     | "insert_section"
+    | "delete_section"
     | "replace_text";
   claim_number: number | null;
   after_claim_number: number | null;

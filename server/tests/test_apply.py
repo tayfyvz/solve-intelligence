@@ -151,6 +151,34 @@ def test_example_4_write_a_background_section() -> None:
     assert len(parse(after).claims) == 7
 
 
+def test_delete_section_removes_an_inserted_section_end_to_end() -> None:
+    """Round-trips insert_section → delete_section through the real applier: the section
+    is gone, the claims are untouched, and the document re-parses clean."""
+    section = Op(
+        kind="insert_section",
+        heading="Background",
+        paragraphs=["1. Field of the Invention", "2. Description of Related Art"],
+        position="before_claims",
+    )
+    with_section = applied(SEED_1, [section])
+    assert "Field of the Invention" in with_section
+
+    out = applied(with_section, [Op(kind="delete_section", heading="Background")])
+    assert "Field of the Invention" not in out
+    assert "Background" not in out
+    assert len(parse(out).claims) == 8
+
+
+def test_delete_section_cannot_delete_the_claims_section() -> None:
+    """The one guard the original design demanded — reachable now by construction rather
+    than by a special case, since the claims region is never in the lists this op
+    searches."""
+    result = apply_plan(SEED_1, [Op(kind="delete_section", heading="Claims")])
+    assert result.html is not None
+    assert len(parse(result.html).claims) == 8
+    assert any("Claims" in w for w in result.warnings)
+
+
 def test_bold_then_reparse_then_delete_claim_3() -> None:
     """A8 — the peel → strip-prefix → renumber → remap interaction, which is the most
     intricate path in the design and the likeliest live question."""

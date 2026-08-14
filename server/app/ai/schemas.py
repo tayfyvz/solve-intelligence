@@ -28,8 +28,16 @@ OpKind = Literal[
     "insert_claim",
     "replace_claim",
     "insert_section",
+    "delete_section",
     "replace_text",
-]  # six — delete_section was cut (PLAN §1.1)
+]  # seven — delete_section was cut in PLAN §1.1 and reinstated on the repo owner's
+#    explicit direction (2026-08-14): unrestricted deletion is a hard requirement. Its
+#    original blocker — the planner is never shown a section's body, so it cannot build a
+#    safe `find` string — is sidestepped by matching on HEADING text only, the same way
+#    insert_section already addresses a section by heading rather than by body text. Its
+#    original danger — deleting the Claims heading — cannot occur by construction: the
+#    claims region lives in `doc.claims_heading`, a field of its own, never in
+#    `doc.preamble`/`doc.postamble`, and delete_section only ever searches those two.
 
 
 class Op(BaseModel):
@@ -85,6 +93,7 @@ REQUIRED: dict[str, tuple[str, ...]] = {
     "insert_claim": ("after_claim_number", "text"),
     "replace_claim": ("claim_number", "text"),
     "insert_section": ("heading", "paragraphs", "position"),
+    "delete_section": ("heading",),
     "replace_text": ("find", "replace"),
 }
 

@@ -38,6 +38,7 @@ SUMMARIES: dict[str, Callable[[Op], str]] = {
     "insert_claim": _insert_claim,
     "replace_claim": lambda op: f"Rewrite claim {op.claim_number}.",
     "insert_section": _insert_section,
+    "delete_section": lambda op: f'Delete the "{op.heading}" section.',
     "replace_text": lambda op: f'Replace "{op.find}" with "{op.replace}" throughout the document.',
 }
 

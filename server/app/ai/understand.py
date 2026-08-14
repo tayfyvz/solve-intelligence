@@ -242,7 +242,7 @@ def missing_file_question(instruction: str, prior_art: str) -> str | None:
 CAPABILITY_STATEMENT = (
     "I'm still not sure which part of the document you mean, so I haven't changed anything. "
     "I can: make a claim bold, italic or struck through; delete a claim; replace exact wording; "
-    "rewrite or add a claim; or add a section. Try naming a claim number, for example "
+    "rewrite or add a claim; or add or delete a section. Try naming a claim number, for example "
     '"make claim 2 bold".'
 )
 

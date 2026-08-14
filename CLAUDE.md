@@ -237,6 +237,17 @@ Tests must justify their existence — target ~20 meaningful ones, not a coverag
 
 ## Scope discipline
 
+**AI chat section deletion is authorized as of 2026-08-14**, on the repo owner's explicit
+direction ("deletion must be available, no restriction"). `delete_section` was cut from the
+original six-op vocabulary (PLAN §1.1) because the planner is never shown a section's body, so it
+could not safely build a `find` string for `replace_text`, and because a wrong deletion's failure
+mode is destroying the patent. Reinstated as a seventh op that sidesteps both: it matches a section
+by **heading text only** (the same way `insert_section` already addresses one), and it structurally
+cannot reach the claims — `doc.claims_heading` is its own field, never a member of the
+`preamble`/`postamble` lists this op searches, so "delete the Claims section" finds nothing to
+delete rather than deleting the claims. No new guard, no new ordering rule beyond one arbitrary
+`KIND_ORDER` placement; see `DESIGN.md` §5.3.
+
 Do not build: Option B (collaboration, presence, CRDT), auth, autosave, version **diff**,
 streaming, agent loops, persisted chat, or CI. *(This list used to ban version
 "rename/diff/delete". **Version rename shipped in Task 1** and is in the UI — a scope rule that

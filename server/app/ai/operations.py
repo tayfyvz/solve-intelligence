@@ -1,6 +1,6 @@
-"""The six operations, and the registry that dispatches to them.
+"""The seven operations, and the registry that dispatches to them.
 
-One contract, shared by all six:
+One contract, shared by all seven:
 
 - they mutate `doc` in place, append human-readable strings to `warnings`, return None;
 - **none of them raises.** The fail mode is always "no change, plus a warning the user
@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from app.ai.document import (
+    HEADING_TAGS,
     MARK_ALIASES,
     MARK_ORDER,
     MARK_TAGS,
@@ -70,6 +71,7 @@ W_EMPTY_FIND = "The text to find was empty, so nothing was replaced."
 W_NOT_FOUND = '"{find}" was not found in the document, so nothing was replaced.'
 W_SPLIT_BY_MARKUP = '"{find}" is split by formatting, so it was left unchanged.'
 W_MULTIPLE_HITS = "That text appears {count} times; all of them were changed."
+W_NO_SECTION = 'There is no "{heading}" section in this document, so nothing was deleted.'
 
 
 def next_uid(doc: ParsedDocument) -> int:
@@ -84,7 +86,7 @@ def _has_inline_marks(block: Block) -> bool:
     return any("<" + tag in block.html for tag in MARK_ALIASES)
 
 
-# ------------------------------------------------------------------ the six operations
+# ---------------------------------------------------------------- the seven operations
 
 
 def format_claim(
@@ -254,6 +256,30 @@ def insert_section(
         doc.preamble.extend(blocks)
 
 
+def delete_section(doc: ParsedDocument, heading: str, warnings: list[str]) -> None:
+    """Remove a whole headed section — its heading and every block up to the next
+    heading — from the preamble or the postamble.
+
+    Matched by HEADING TEXT ONLY, never by body text: the planner is never shown a
+    section's body on this path (same reason insert_section addresses a section by
+    heading rather than by content). The claims region cannot be reached this way even
+    accidentally — it lives in `doc.claims_heading`, its own field, never in
+    `doc.preamble` or `doc.postamble`, which are the only two lists this searches.
+    """
+    target = collapse_text(heading).strip().casefold()
+    if target:
+        for blocks in (doc.preamble, doc.postamble):
+            for i, block in enumerate(blocks):
+                if block.tag in HEADING_TAGS and block_text(block).strip().casefold() == target:
+                    end = next(
+                        (j for j in range(i + 1, len(blocks)) if blocks[j].tag in HEADING_TAGS),
+                        len(blocks),
+                    )
+                    del blocks[i:end]
+                    return
+    warnings.append(W_NO_SECTION.format(heading=heading))
+
+
 def replace_text(doc: ParsedDocument, find: str, replace: str, warnings: list[str]) -> None:
     """Literal, case-sensitive, document-wide find and replace. No regex — the model
     does not get a regex engine.
@@ -358,6 +384,10 @@ def _do_insert_section(doc: ParsedDocument, op: Op, ctx: ApplyCtx, warnings: lis
     insert_section(doc, op.heading, op.paragraphs, op.position, warnings)
 
 
+def _do_delete_section(doc: ParsedDocument, op: Op, ctx: ApplyCtx, warnings: list[str]) -> None:
+    delete_section(doc, op.heading, warnings)
+
+
 def _do_replace_text(doc: ParsedDocument, op: Op, ctx: ApplyCtx, warnings: list[str]) -> None:
     replace_text(doc, op.find, op.replace, warnings)
 
@@ -372,5 +402,6 @@ OPS: dict[str, OpFn] = {
     "insert_claim": _do_insert_claim,
     "replace_claim": _do_replace_claim,
     "insert_section": _do_insert_section,
+    "delete_section": _do_delete_section,
     "replace_text": _do_replace_text,
 }

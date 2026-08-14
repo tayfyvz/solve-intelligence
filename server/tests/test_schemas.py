@@ -86,6 +86,7 @@ def _sample(kind: str) -> Op:
         "insert_section": Op(
             kind="insert_section", heading="Background", paragraphs=["x"], position="before_claims"
         ),
+        "delete_section": Op(kind="delete_section", heading="Background"),
         "replace_text": Op(kind="replace_text", find="glass", replace="quartz"),
     }
     return samples[kind]
@@ -97,6 +98,7 @@ def _sample(kind: str) -> Op:
         (Op(kind="delete_claim"), "claim_number"),
         (Op(kind="format_claim", claim_number=1, enabled=True), "mark"),
         (Op(kind="insert_section", heading="H", paragraphs=[]), "position"),
+        (Op(kind="delete_section"), "heading"),
     ],
 )
 def test_require_reports_missing_fields(op: Op, missing: str) -> None:
@@ -152,6 +154,7 @@ def test_strictness_adds_no_schema_constraint() -> None:
         ("insert_claim", True),
         ("replace_claim", True),
         ("insert_section", True),
+        ("delete_section", False),
     ],
 )
 def test_authors_new_text_is_kind_driven(kind: str, expected: bool) -> None:
