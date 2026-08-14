@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import field_validator
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -19,8 +19,14 @@ class Settings(BaseSettings):
     # an app to report it. NoDecode hands the raw string to the validator below.
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
 
-    openai_api_key: str | None = None
+    # SecretStr, not str: any repr() of this object — a log line, a ValidationError that
+    # quotes its input, a debugger frame in a traceback — would otherwise print the live
+    # key in full. SecretStr renders ********** everywhere and hands over the real value
+    # only to an explicit .get_secret_value(). There are exactly two such call sites.
+    openai_api_key: SecretStr | None = None
     openai_model: str = "gpt-5.2-2025-12-11"
+    # Used ONLY by scripts/smoke_llm.py. The per-call budget the app uses is
+    # `ai_node_timeout_seconds` below; wiring the wrong one is a silent 5x error.
     openai_timeout_seconds: float = 60.0
 
     max_content_bytes: int = 1_000_000  # save path
@@ -28,6 +34,15 @@ class Settings(BaseSettings):
     max_instruction_chars: int = 2_000
     max_context_chars: int = 40_000
     max_history_turns: int = 3
+
+    # --- AI, Task 2 ------------------------------------------------------
+    # PER LLM CALL. Passed as `timeout=` on every chat.completions.parse. 1.79x the
+    # slowest of the 14 calls 4Z measured (max 6.7 s, median 1.5 s — PLAN §20.7).
+    ai_node_timeout_seconds: float = 12.0
+    # None => the kwarg is omitted entirely. 4Z measured reasoning_effort="low" as
+    # ACCEPTED on gpt-5.2-2025-12-11, so "low" is the shipped value; it stays a setting
+    # because an unsupported kwarg would be a 400 on every single call.
+    openai_reasoning_effort: str | None = "low"
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -45,7 +60,10 @@ class Settings(BaseSettings):
         A reviewer who runs `cp .env.example .env` and forgets to paste a real key
         must get a clean "AI is not configured" 503, not an authentication 500.
         """
-        key = (self.openai_api_key or "").strip()
+        # .get_secret_value() is the ONLY place the raw key is read on this path.
+        # Reading self.openai_api_key directly would compare "**********" against
+        # the placeholder prefix and report every key as configured.
+        key = (self.openai_api_key.get_secret_value() if self.openai_api_key else "").strip()
         return bool(key) and not key.startswith("sk-XXXX")
 
 
