@@ -40,19 +40,19 @@ onward is Task 2 and is not yet built.
 | 11 | **2B** The store | ✅ shipped |
 | 12 | **2C** Editor and the remount contract | ✅ shipped |
 | 13 | **2D** App shell, version bar, dirty dialog — **Task 1 demoable** | ✅ shipped |
-| 14 | **0D** `langgraph` dependency add | to build |
-| 15 | **3A** `document.py` + `outline.py` — the round-trip contract | to build |
-| 16 | **3B** `operations.py` — the six operations | to build |
-| 17 | **4A** `ai/schemas.py` — every model↔engine contract | to build |
-| 18 | **3C** `apply.py` — bind, apply, renumber, remap | to build |
-| 19 | **3D** `verify.py` — the deterministic artefact gate | to build |
-| 20 | **4Z** Live API pre-flight (`scripts/smoke_llm.py`) | to build |
-| 21 | **4B** `prompts.py` + `llm.py` | to build |
-| 22 | **4C** `graph.py` + `nodes.py` — the LangGraph pipeline | to build |
-| 23 | **4D** `routers/ai.py` — `/api/ai/chat` + `/api/ai/apply` | to build |
-| 24 | **5A** `.txt` validation and the drop zone | to build |
-| 25 | **5B** Selection capture, claim resolution, highlight | to build |
-| 26 | **5C** The chat panel — **Option A demoable** | to build |
+| 14 | **0D** `langgraph` dependency add | ✅ shipped |
+| 15 | **3A** `document.py` + `outline.py` — the round-trip contract | ✅ shipped |
+| 16 | **3B** `operations.py` — the six operations | ✅ shipped |
+| 17 | **4A** `ai/schemas.py` — every model↔engine contract | ✅ shipped |
+| 18 | **3C** `apply.py` — bind, apply, renumber, remap | ✅ shipped |
+| 19 | **3D** `verify.py` — the deterministic artefact gate | ✅ shipped |
+| 20 | **4Z** Live API pre-flight (`scripts/smoke_llm.py`) | ✅ shipped |
+| 21 | **4B** `prompts.py` + `llm.py` | ✅ shipped |
+| 22 | **4C** `graph.py` + `nodes.py` — the LangGraph pipeline | ✅ shipped |
+| 23 | **4D** `routers/ai.py` — `/api/ai/chat` + `/api/ai/apply` | ✅ shipped |
+| 24 | **5A** `.txt` validation and the drop zone | ✅ shipped |
+| 25 | **5B** Selection capture, claim resolution, highlight | ✅ shipped |
+| 26 | **5C** The chat panel — **Option A demoable** | ✅ shipped |
 | 27 | **6** Hardening and stress pass | ✅ shipped |
 | 28 | Production readiness | ✅ shipped |
 | 29 | **7** Documentation and submission | ✅ shipped |
@@ -9918,7 +9918,8 @@ the two can be checked against each other mechanically. The phases are listed in
 | **5A** `.txt` drop | `F1`–`F8` | 8 | No | 289 |
 | **5B** selection | `X1`–`X9` | 9 | No | 298 |
 | **5C** chat panel | `CP-01`–`CP-31` | 31 | No | 329 |
-| **Correction — three gate tests defined as checklist bullets, not table rows** | `E1` (gate 2C), `D1`, `D2` (gate 2D) | **+3** | No | **332** |
+| **Correction — three gate tests defined as checklist bullets, not table rows** | `E1` (gate 2C), `D1`, `D2` (gate 2D) | **+3** | No | 332 |
+| **6** hardening — §27 has no gate table, so these were specified nowhere | the `db.py` dialect guard, the CORS preflight, the error-middleware log hygiene (6A); **`L8`–`L10`** logging policy (6B); **`L11`, `L12`** the reasoning_effort/temperature exclusion (6E) | **+8** | No | **340** |
 
 **`VF14` and `VF18` are counted in 4A and 3C, not in 3D.** They keep their `VF` ids and their home in
 `test_verify.py`; what moved is which gate has to be green before the commit lands, because one needs
@@ -9936,9 +9937,25 @@ absorb a bookkeeping fix is how the two disagreeing totals in C26 happened in th
 checklist bullet is not counted by any mechanical pass over this document.** If a future gate needs a
 bullet-defined test, give it a table row instead.
 
-**Split:** backend **47 → 191** (+144); frontend **90 → 141** (+51, of which 48 are new Task-2 rows
-and 3 are the previously-uncounted `E1`/`D1`/`D2`). **Total 332 gate rows, of which zero require
-an API key.** *(325 → 329: **+3** for the bullet-defined gate tests the extraction missed, and **+1**
+**Split:** backend **47 → 199** (+152, of which 8 are Step 6's); frontend **90 → 141** (+51, of
+which 48 are new Task-2 rows and 3 are the previously-uncounted `E1`/`D1`/`D2`). **Total 340 gate
+rows, of which zero require an API key.**
+
+**Step 6's eight are a gap this section had to be told about, and that is worth recording.** §27 is
+a stress *matrix*, not a gate table — its rows say "Auto G6" or "Manual", pointing at tests that
+already exist rather than specifying new ones. So the phase that added the `db.py` guard, the CORS
+narrowing, the logging policy and the two tests pinning the `reasoning_effort`/`temperature`
+exclusion contributed **eight test functions that no gate table anywhere in this document
+specified**. The same mechanical extraction that missed `E1`/`D1`/`D2` would have missed all eight,
+for the same reason: **it can only count what a table row declares.** A phase whose deliverable is
+"harden what exists" still needs somewhere to declare what it added.
+
+**A note on this number versus what `pytest`/`vitest` print.** This section counts **gate rows** —
+specified, named behaviours. The suites report **496 backend and 212 frontend test functions**,
+because a single gate row is frequently a `parametrize`/`it.each` covering several cases (one 404
+row over five routes, one exception→status table, one file-validation matrix). The two numbers
+measure different things and are both correct; **340 is the number this document owns**, and 708 is
+the number the runners own. *(325 → 329: **+3** for the bullet-defined gate tests the extraction missed, and **+1**
 for **`G19`**, the test of `recursion_limit` and its `GraphRecursionError` copy — a bound §3.4
 presented as one of three independently sufficient mechanisms, with a user-facing sentence, that
 nothing executed. 329 → 330 at 4C: **+1** for the no-plan companion row, §22.13 row 13.)*
