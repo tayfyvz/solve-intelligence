@@ -77,10 +77,10 @@ export default function TreeRow({
         // row is easy to miss, and "which patent am I in" is the one question
         // this tree exists to answer. The left bar carries it at a glance even
         // when the row is scrolled to the edge of vision.
-        className={`focus-ring min-w-0 flex-1 rounded-md py-1.5 pr-2 text-left transition-colors duration-150 disabled:opacity-50 ${
+        className={`focus-ring min-w-0 flex-1 rounded-lg py-1.5 pr-2 text-left transition-all duration-200 disabled:opacity-50 ${
           selected
-            ? "border border-sky-300 border-l-[3px] border-l-sky-500 bg-sky-50 pl-[calc(0.5rem-2px)] shadow-sm"
-            : "border border-transparent pl-2 hover:bg-slate-200/60"
+            ? "border border-sky-300 border-l-[3px] border-l-sky-500 bg-gradient-to-r from-sky-50 to-white pl-[calc(0.5rem-2px)] shadow-sm"
+            : "border border-transparent pl-2 hover:bg-slate-100 hover:shadow-sm"
         }`}
       >
         <span className="flex min-w-0 items-center gap-1.5">

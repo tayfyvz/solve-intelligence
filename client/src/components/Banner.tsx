@@ -65,9 +65,13 @@ export default function Banner({
     // `minmax(0,1fr)` pins both tracks to an equal share of the leftover width
     // no matter what either side contains, which is what actually centres the
     // middle column.
-    <header className="z-10 grid min-h-[3.25rem] w-full shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 bg-black px-3 py-1.5 text-white sm:px-4">
-      <div className="flex min-w-0 shrink-0 items-center gap-2">
-        <img src="/si_logo.svg" alt="Solve Intelligence" className="h-6 w-6" />
+    <header className="appbar z-10 grid min-h-[3.25rem] w-full shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 px-3 py-1.5 text-white sm:px-4">
+      <div className="flex min-w-0 shrink-0 items-center gap-2.5">
+        {/* The mark sits in its own lit tile rather than directly on the bar: at
+            24px on near-black, a flat logo reads as a smudge. */}
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/10 ring-1 ring-inset ring-white/15">
+          <img src="/si_logo.svg" alt="Solve Intelligence" className="h-5 w-5" />
+        </span>
         <span className="text-[0.8125rem] font-semibold tracking-tight max-lg:sr-only">
           Patent Reviewer
         </span>
@@ -92,8 +96,16 @@ export default function Banner({
             {dirty && (
               <span
                 role="status"
-                className="shrink-0 rounded-full bg-amber-400/15 px-2 py-0.5 text-[0.6875rem] font-medium leading-4 text-amber-200 ring-1 ring-amber-300/30"
+                className="flex shrink-0 items-center gap-1.5 rounded-full bg-amber-400/15 px-2 py-0.5 text-[0.6875rem] font-medium leading-4 text-amber-200 ring-1 ring-amber-300/30"
               >
+                {/* A live dot, because "unsaved" is the one state in the bar that
+                    is about to cost the user work. aria-hidden: the pill's own
+                    text already says it, and a pulsing dot has nothing to add to
+                    a screen reader. */}
+                <span
+                  aria-hidden="true"
+                  className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-amber-300"
+                />
                 Unsaved changes
               </span>
             )}

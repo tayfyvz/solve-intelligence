@@ -36,7 +36,9 @@ export default function Composer({
   onSuggestion,
 }: ComposerProps) {
   return (
-    <div className="border-t border-slate-200 p-3">
+    // A tinted footer, so the composer reads as a fixed surface the transcript
+    // scrolls behind rather than as the last item in the list.
+    <div className="rounded-xl border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-3 shadow-sm">
       {aiUnavailable && (
         <p className="mb-2 rounded-md bg-amber-50 px-2 py-1 text-[0.75rem] text-amber-900 ring-1 ring-amber-200">
           AI is unavailable in this environment. Versioning and manual editing are unaffected.
@@ -52,7 +54,7 @@ export default function Composer({
               key={suggestion}
               type="button"
               onClick={() => onSuggestion(suggestion)}
-              className="focus-ring rounded-full border border-slate-300 px-2 py-0.5 text-[0.75rem] text-slate-600 hover:bg-slate-100"
+              className="focus-ring rounded-full border border-slate-300 bg-white px-2.5 py-0.5 text-[0.75rem] text-slate-600 transition-colors duration-150 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800"
             >
               {suggestion}
             </button>
@@ -75,7 +77,7 @@ export default function Composer({
           }
         }}
         placeholder="Ask for an edit, or a question…"
-        className="focus-ring max-h-40 w-full resize-y rounded-lg border border-slate-300 px-2 py-1.5 text-[0.8125rem]"
+        className="focus-ring max-h-40 w-full resize-y rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-[0.8125rem] shadow-inner transition-colors duration-150 placeholder:text-slate-400 hover:border-slate-400"
       />
 
       {value.length >= COUNTER_FROM && (
@@ -90,7 +92,7 @@ export default function Composer({
         // An empty composer cannot send, so an attached file can never be
         // interpreted as an instruction on its own.
         disabled={sending || value.trim() === ""}
-        className="btn btn-primary focus-ring mt-2 w-full"
+        className="btn btn-accent focus-ring mt-2 w-full"
       >
         {sending ? "Thinking…" : "Send"}
       </button>

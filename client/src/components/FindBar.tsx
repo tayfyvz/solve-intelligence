@@ -56,7 +56,7 @@ export default function FindBar() {
   };
 
   return (
-    <div className="flex items-center gap-2 border-b border-slate-200 bg-white px-4 py-1.5">
+    <div className="flex items-center gap-2 border-b border-slate-200 bg-gradient-to-b from-white to-slate-50 px-4 py-1.5">
       <label htmlFor="find-input" className="sr-only">
         Find in document
       </label>
@@ -74,7 +74,7 @@ export default function FindBar() {
           event.preventDefault();
           step(event.shiftKey ? -1 : 1);
         }}
-        className="focus-ring min-w-0 flex-1 rounded-md border border-slate-300 px-2 py-1 text-[0.8125rem]"
+        className="focus-ring min-w-0 flex-1 rounded-full border border-slate-300 bg-white px-3 py-1 text-[0.8125rem] transition-colors duration-150 placeholder:text-slate-400 hover:border-slate-400"
       />
 
       {/* aria-live, so a screen reader hears the count change without the field
@@ -93,7 +93,7 @@ export default function FindBar() {
         aria-label="Previous match"
         disabled={matches.length === 0}
         onClick={() => step(-1)}
-        className="focus-ring shrink-0 rounded-md border border-slate-300 px-2 py-1 text-[0.75rem] text-slate-700 transition-colors duration-150 hover:bg-slate-100 disabled:opacity-40"
+        className="focus-ring flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-[0.75rem] text-slate-600 transition-colors duration-150 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 disabled:opacity-40"
       >
         ↑
       </button>
@@ -102,7 +102,7 @@ export default function FindBar() {
         aria-label="Next match"
         disabled={matches.length === 0}
         onClick={() => step(1)}
-        className="focus-ring shrink-0 rounded-md border border-slate-300 px-2 py-1 text-[0.75rem] text-slate-700 transition-colors duration-150 hover:bg-slate-100 disabled:opacity-40"
+        className="focus-ring flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-[0.75rem] text-slate-600 transition-colors duration-150 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 disabled:opacity-40"
       >
         ↓
       </button>

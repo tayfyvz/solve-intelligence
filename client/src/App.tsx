@@ -246,7 +246,7 @@ export default function App() {
         {/* overflow-hidden, not overflow-y-auto: the scroll container for the
             document is the editor *inside* this cell, so the header and the error
             banner stay pinned instead of scrolling away with the claims. */}
-        <main className="flex min-h-[26rem] min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:min-h-0">
+        <main className="panel flex min-h-[26rem] min-w-0 flex-1 flex-col overflow-hidden lg:min-h-0">
           {/* The dirty dialog renders the shared `error` itself, so the banner
               stands down rather than showing the same sentence twice. The New
               patent dialog is NOT in this condition: it renders only the message
@@ -256,7 +256,7 @@ export default function App() {
           {error && !pending && (
             <div
               role="alert"
-              className="flex items-start gap-3 border-b border-red-200 bg-red-50 px-4 py-2 text-[0.8125rem] text-red-700"
+              className="flex animate-[rise-in_200ms_ease-out] items-start gap-3 border-b border-red-200 bg-gradient-to-r from-red-50 to-rose-50 px-4 py-2 text-[0.8125rem] text-red-700"
             >
               <span className="flex-1 pt-0.5">{error}</span>
               <button
@@ -291,7 +291,7 @@ export default function App() {
                   whole mechanism — no sync effect, no setContent. */}
               <div
                 key={`${documentId}:${versionNumber}`}
-                className={`min-h-0 flex-1 animate-[fade-in_200ms_ease-out] overflow-y-auto bg-slate-50 px-4 ${
+                className={`desk min-h-0 flex-1 animate-[rise-in_260ms_cubic-bezier(0.16,1,0.3,1)] overflow-y-auto px-4 ${
                   leftCollapsed && rightCollapsed ? "editor-wide" : ""
                 }`}
               >
@@ -305,9 +305,12 @@ export default function App() {
             <div
               role="status"
               aria-label="Loading document"
-              className="flex-1 overflow-hidden bg-slate-50 px-4"
+              className="desk flex-1 overflow-hidden px-4"
             >
-              <div className="mx-auto mt-6 max-w-[44rem] animate-pulse space-y-3 rounded-xl border border-slate-200 bg-white p-8 sm:p-14">
+              {/* The sweep is an OVERLAY, not a background on this box: the bars
+                  are opaque children, so a gradient painted behind them would be
+                  hidden by the very thing it is meant to light up. */}
+              <div className="relative mx-auto mt-6 max-w-[44rem] space-y-3 overflow-hidden rounded-xl border border-slate-200 bg-white p-8 sm:p-14">
                 <div className="h-6 w-40 rounded bg-slate-200" />
                 <div className="h-4 rounded bg-slate-100" />
                 <div className="h-4 rounded bg-slate-100" />
@@ -317,10 +320,21 @@ export default function App() {
                 <div className="h-4 rounded bg-slate-100" />
                 <div className="h-4 w-11/12 rounded bg-slate-100" />
                 <div className="h-4 w-1/2 rounded bg-slate-100" />
+                {/* Last, so `space-y-3` does not hand the first bar a stray
+                    margin-top: the utility skips only the FIRST child. */}
+                <div aria-hidden="true" className="shimmer pointer-events-none absolute inset-0" />
               </div>
             </div>
           ) : (
-            <div className="m-auto max-w-xs text-center text-[0.8125rem] text-slate-500">
+            <div className="m-auto max-w-xs animate-[rise-in_260ms_cubic-bezier(0.16,1,0.3,1)] text-center text-[0.8125rem] text-slate-500">
+              {/* An empty pane that is only a sentence reads as a failure; a mark
+                  above it reads as a starting point. Decorative, so aria-hidden. */}
+              <div
+                aria-hidden="true"
+                className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-sky-400 text-xl text-white shadow-lg shadow-indigo-500/25"
+              >
+                ✦
+              </div>
               <p>No patent is open.</p>
               <button
                 type="button"

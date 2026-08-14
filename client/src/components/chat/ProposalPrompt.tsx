@@ -24,7 +24,10 @@ export default function ProposalPrompt({
   onCancel,
 }: ProposalPromptProps) {
   return (
-    <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+    // Tinted in the accent, unlike every other block in a bubble: this is the one
+    // place in the transcript where a click changes the document, and it has to be
+    // findable at a glance in a long scroll-back.
+    <div className="mt-2 rounded-xl border border-indigo-200 bg-gradient-to-b from-indigo-50/80 to-white p-3 shadow-sm">
       {/* The single most useful thing an attorney can be told before clicking:
           does this write new claim language, or only rearrange text they wrote? */}
       {proposal.authors_new_text && (

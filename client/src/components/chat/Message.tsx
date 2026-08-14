@@ -41,10 +41,13 @@ const RESOLUTIONS: Record<NonNullable<ChatMessage["resolution"]>, string> = {
   superseded: "Superseded — ask again if you still want this.",
 };
 
+// `shadow-sm` is per-tone, not on the base bubble: the system tone is a bare line
+// of centred grey text with no border and no fill, and a shadow under nothing
+// draws a rectangle the reader can see but not explain.
 const TONES: Record<ChatMessage["tone"], string> = {
-  normal: "border-slate-200 bg-white",
-  clarify: "border-slate-200 border-l-4 border-l-sky-400 bg-white",
-  error: "border-red-200 border-l-4 border-l-red-400 bg-white text-red-700",
+  normal: "border-slate-200 bg-white shadow-sm",
+  clarify: "border-slate-200 border-l-4 border-l-indigo-400 bg-white shadow-sm",
+  error: "border-red-200 border-l-4 border-l-red-500 bg-red-50/60 text-red-700 shadow-sm",
   system: "border-transparent bg-transparent text-center text-slate-500",
 };
 
@@ -62,10 +65,15 @@ export default function Message({
   const proposal = message.proposal;
 
   return (
-    <li className={`flex ${mine ? "justify-end" : "justify-stretch"}`}>
+    <li className={`msg-in flex ${mine ? "justify-end" : "justify-stretch"}`}>
       <div
-        className={`min-w-0 rounded-lg border px-3 py-2 text-[0.8125rem] ${
-          mine ? "max-w-[85%] border-slate-200 bg-slate-100" : "w-full"
+        className={`min-w-0 rounded-xl border px-3 py-2 text-[0.8125rem] ${
+          mine
+            ? // Ink, like the primary button: the user's own turn is the one thing
+              // in the transcript that never needs to be read twice, so it can be
+              // the darkest object and still be the least demanding.
+              "max-w-[85%] border-slate-800 bg-gradient-to-br from-slate-700 to-slate-900 text-white shadow-md shadow-slate-900/15"
+            : "w-full"
         } ${mine ? "" : TONES[message.tone]}`}
       >
         {/* whitespace-pre-line: the bubbles deliberately carry a blank line between
@@ -95,7 +103,7 @@ export default function Message({
                 // The user is mid-conversation: focus must not leave the composer.
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => onCitation(claimNumber)}
-                className="focus-ring rounded-full border border-slate-300 px-2 py-0.5 text-[0.75rem] text-slate-700 hover:bg-slate-100"
+                className="focus-ring rounded-full border border-sky-200 bg-sky-50 px-2.5 py-0.5 text-[0.75rem] font-medium text-sky-800 transition-colors duration-150 hover:border-sky-300 hover:bg-sky-100"
               >
                 Claim {claimNumber}
               </button>
@@ -129,7 +137,7 @@ export default function Message({
                 type="button"
                 onClick={() => onOption(option)}
                 disabled={sending}
-                className="focus-ring rounded-md border border-sky-300 bg-sky-50 px-2 py-1 text-left text-[0.75rem] text-sky-900 hover:bg-sky-100 disabled:opacity-50"
+                className="focus-ring rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-left text-[0.75rem] font-medium text-indigo-900 transition-colors duration-150 hover:border-indigo-300 hover:bg-indigo-100 disabled:opacity-50"
               >
                 {option}
               </button>

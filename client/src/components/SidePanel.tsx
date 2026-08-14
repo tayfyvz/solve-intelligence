@@ -98,7 +98,7 @@ export default function SidePanel({
           aria-label={`Expand ${label} panel`}
           title={`Expand ${label} panel`}
           onClick={() => onCollapsedChange(false)}
-          className="focus-ring flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-2 py-2 text-slate-600 shadow-sm transition-colors duration-150 hover:border-sky-300 hover:bg-sky-50 hover:text-sky-700 lg:flex-col lg:py-4"
+          className="panel focus-ring flex w-full items-center justify-center gap-2 px-2 py-2 text-slate-600 transition-all duration-200 hover:-translate-y-px hover:border-indigo-300 hover:text-indigo-700 hover:shadow-md lg:flex-col lg:py-4"
         >
           <Chevron direction={side === "left" ? "right" : "left"} />
           {/* Vertical only where the rail is a column; stacked, it reads across. */}
@@ -117,7 +117,7 @@ export default function SidePanel({
       style={resizable ? { width } : undefined}
       className={`flex min-h-0 shrink-0 ${side === "left" ? "flex-row" : "flex-row-reverse"} max-lg:w-full`}
     >
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-1.5 overflow-hidden rounded-xl border border-slate-200 bg-white p-2.5 shadow-sm">
+      <div className="panel flex min-h-0 min-w-0 flex-1 flex-col gap-1.5 overflow-hidden p-2.5">
         <div className={`flex ${side === "left" ? "justify-end" : "justify-start"}`}>
           {/* A bordered, labelled control rather than a 20px glyph: at rest the
               old one was a grey chevron on white that readers did not find, and
@@ -128,7 +128,7 @@ export default function SidePanel({
             aria-label={`Collapse ${label} panel`}
             title={`Collapse ${label} panel`}
             onClick={() => onCollapsedChange(true)}
-            className="focus-ring flex h-6 items-center gap-1 rounded-md border border-slate-300 bg-slate-50 px-1.5 text-[0.6875rem] font-medium text-slate-600 transition-colors duration-150 hover:border-sky-300 hover:bg-sky-50 hover:text-sky-700"
+            className="focus-ring flex h-6 items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 text-[0.6875rem] font-medium text-slate-500 transition-colors duration-150 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
           >
             <Chevron direction={side === "left" ? "left" : "right"} />
             <span>Hide</span>
@@ -157,7 +157,7 @@ export default function SidePanel({
         }}
         // Visible at rest, like the collapse button: a drag target you have to
         // discover by sweeping the mouse is not a drag target.
-        className="focus-ring mx-0.5 hidden w-1.5 shrink-0 cursor-col-resize rounded-full bg-slate-200 transition-colors duration-150 hover:bg-sky-400 lg:block"
+        className="focus-ring mx-0.5 hidden w-1.5 shrink-0 cursor-col-resize rounded-full bg-slate-200/80 transition-colors duration-200 hover:bg-gradient-to-b hover:from-indigo-400 hover:to-sky-400 lg:block"
       />
     </div>
   );

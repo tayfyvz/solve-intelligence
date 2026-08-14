@@ -18,10 +18,28 @@
   --ink: #0f172a;
   --ink-muted: #64748b;
   --text-color: #1e293b;
-  --background-color: #eef1f5; /* chrome behind the panes */
+  --background-color: #eceff5; /* chrome behind the panes */
   --surface-color: #ffffff;
   --border-color: #e2e8f0;
   --focus-color: #0284c7;
+
+  /* One accent pair, used for every "this is live / this is selected / press me"
+     signal in the app. Indigo leads and sky follows, so a gradient built from the
+     two reads as one hue moving rather than as two colours fighting. */
+  --accent: #4f46e5;
+  --accent-strong: #4338ca;
+  --accent-2: #0ea5e9;
+
+  /* Two elevations, defined once. Every raised surface uses the same pair of
+     layers — a hairline contact shadow plus a wide, very soft ambient one — which
+     is what makes panes that are actually different components look like one set
+     of objects sitting on the same desk. */
+  --shadow-card:
+    0 1px 2px rgb(15 23 42 / 0.05),
+    0 10px 30px -22px rgb(15 23 42 / 0.45);
+  --shadow-lift:
+    0 1px 2px rgb(15 23 42 / 0.06),
+    0 14px 34px -18px rgb(15 23 42 / 0.35);
 }
 
 /* stretch/flex-start, not centre: the app is a full-height three-pane layout that fills
@@ -39,6 +57,50 @@ div#root {
   background-color: var(--background-color);
   color: var(--text-color);
   -webkit-font-smoothing: antialiased;
+}
+
+/* The desk. Two very faint radial washes in the accent pair, only on #root so the
+   layers are painted once rather than three times, and `fixed` so they stay put
+   while a pane scrolls — a gradient that scrolls with content reads as a stripe.
+   They are the reason the chrome behind the panes looks lit rather than grey. */
+div#root {
+  background-image:
+    radial-gradient(58rem 34rem at 8% -12%, rgb(99 102 241 / 0.13), transparent 60%),
+    radial-gradient(46rem 30rem at 102% -6%, rgb(14 165 233 / 0.13), transparent 58%);
+  background-attachment: fixed;
+}
+
+::selection {
+  background-color: rgb(79 70 229 / 0.18);
+}
+
+/* Slim, self-coloured scrollbars. The app is four nested scroll panes; default
+   platform bars cut a grey channel through every one of them. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  /* Padded via a transparent border + background-clip: a 4px thumb with room
+     around it, without a second element to draw the track. */
+  background-color: #cbd5e1;
+  background-clip: content-box;
+  border: 3px solid transparent;
+  border-radius: 9999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: #94a3b8;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* Everything below lives in @layer components, which `@import "tailwindcss"` orders *before*
@@ -80,15 +142,27 @@ div#root {
     font-size: 0.8125rem;
     font-weight: 500;
     cursor: pointer;
+    /* `transform` and `box-shadow` are in here so the hover lift below is a
+       movement rather than a jump. 160ms on a cubic ease-out is the shortest
+       curve that still reads as motion. */
     transition:
-      background-color 150ms ease,
-      border-color 150ms ease,
-      color 150ms ease;
+      background-color 160ms cubic-bezier(0.22, 1, 0.36, 1),
+      border-color 160ms cubic-bezier(0.22, 1, 0.36, 1),
+      color 160ms cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 160ms cubic-bezier(0.22, 1, 0.36, 1),
+      transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   /* Icon-only and spinner children must not stretch to the button's height. */
   .btn > * {
     flex: none;
+  }
+
+  /* One pressed state for all four shapes: the button settles back to the surface
+     under the finger. Paired with the -1px hover lift, a click has a full arc
+     instead of a colour swap. */
+  .btn:active:not(:disabled) {
+    transform: translateY(0);
   }
 
   .btn:disabled {
@@ -97,22 +171,50 @@ div#root {
   }
 
   .btn-primary {
+    /* A gradient rather than flat ink: the primary action is the one thing on the
+       bar that should catch the eye first, and 4% of luminance across 34px is
+       enough to do that without becoming a coloured button in a monochrome UI. */
+    background-image: linear-gradient(180deg, #1e293b, var(--ink));
     background-color: var(--ink);
     color: #ffffff;
+    box-shadow: 0 1px 2px rgb(15 23 42 / 0.25);
   }
 
   .btn-primary:hover:not(:disabled) {
-    background-color: #1e293b;
+    background-image: linear-gradient(180deg, #334155, #1e293b);
+    box-shadow: 0 6px 16px -6px rgb(15 23 42 / 0.5);
+    transform: translateY(-1px);
+  }
+
+  /* The accent primary, used for exactly one control: the chat's Send. It is the
+     app's most-pressed button and the only one that starts something rather than
+     confirming it, so it gets the accent while every other primary stays ink. Two
+     accent buttons on one screen would make neither of them mean anything. */
+  .btn-accent {
+    background-image: linear-gradient(135deg, var(--accent), var(--accent-2));
+    background-color: var(--accent);
+    color: #ffffff;
+    box-shadow: 0 1px 2px rgb(79 70 229 / 0.35);
+  }
+
+  .btn-accent:hover:not(:disabled) {
+    background-image: linear-gradient(135deg, var(--accent-strong), #0284c7);
+    box-shadow: 0 8px 20px -8px rgb(79 70 229 / 0.7);
+    transform: translateY(-1px);
   }
 
   .btn-secondary {
     background-color: var(--surface-color);
     color: var(--text-color);
     border-color: #cbd5e1;
+    box-shadow: 0 1px 1px rgb(15 23 42 / 0.04);
   }
 
   .btn-secondary:hover:not(:disabled) {
-    background-color: #f1f5f9;
+    background-color: #f8fafc;
+    border-color: #94a3b8;
+    box-shadow: 0 4px 12px -6px rgb(15 23 42 / 0.35);
+    transform: translateY(-1px);
   }
 
   /* On the black bar. The primary inverts (paper on ink becomes ink on paper) and
@@ -125,18 +227,21 @@ div#root {
   }
 
   .btn-light:hover:not(:disabled) {
-    background-color: #e2e8f0;
+    background-color: #f1f5f9;
+    box-shadow: 0 6px 18px -6px rgb(0 0 0 / 0.6);
+    transform: translateY(-1px);
   }
 
   .btn-outline-light {
-    background-color: transparent;
+    background-color: rgb(255 255 255 / 0.06);
     color: #ffffff;
     border-color: rgb(255 255 255 / 0.35);
   }
 
   .btn-outline-light:hover:not(:disabled) {
-    background-color: rgb(255 255 255 / 0.12);
-    border-color: rgb(255 255 255 / 0.6);
+    background-color: rgb(255 255 255 / 0.16);
+    border-color: rgb(255 255 255 / 0.65);
+    transform: translateY(-1px);
   }
 
   /* The shared ring is sky against white; on black it needs the light side of the
@@ -144,6 +249,45 @@ div#root {
   .btn-light:focus-visible,
   .btn-outline-light:focus-visible {
     outline-color: #7dd3fc;
+  }
+
+  /* The app bar. A near-black gradient with an indigo cast at the left, so the
+     strip carries the product's accent instead of being a black rule; the inset
+     hairline along the bottom is the light edge that keeps it from reading as a
+     hole cut in the page. */
+  .appbar {
+    background-image:
+      radial-gradient(36rem 8rem at 0% 0%, rgb(79 70 229 / 0.45), transparent 70%),
+      linear-gradient(180deg, #0b1220, #050810);
+    background-color: #050810;
+    box-shadow:
+      inset 0 -1px 0 rgb(255 255 255 / 0.08),
+      0 8px 24px -18px rgb(15 23 42 / 0.9);
+  }
+
+  /* The surface the document sheet sits on. It is the largest single area on
+     screen, and flat slate made the whole app read as grey — the root's washes
+     are covered by the panes and only ever show in the 10px gutter, so the light
+     has to be repeated here to be seen at all. `fixed` keeps it still while the
+     claims scroll past. */
+  .desk {
+    background-color: #eaeef5;
+    background-image:
+      radial-gradient(44rem 28rem at 50% -6%, rgb(99 102 241 / 0.22), transparent 68%),
+      radial-gradient(34rem 24rem at 4% 96%, rgb(14 165 233 / 0.18), transparent 62%),
+      linear-gradient(180deg, #e9edf4, #f4f7fb);
+    background-attachment: fixed;
+  }
+
+  /* Every raised pane — the two side panels and the editor's frame — is one
+     object. Defining the surface once is what makes them agree; three copies of
+     the same six utilities is what made them drift. */
+  .panel {
+    background-image: linear-gradient(180deg, #ffffff, #fbfcfe);
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: 0.875rem;
+    box-shadow: var(--shadow-card);
   }
 
   /* Formatting toolbar. It sits inside the editor's scroll pane and sticks to the
@@ -164,7 +308,10 @@ div#root {
        pane's tint would break the day someone makes the pane transparent. */
     background-color: var(--surface-color);
     border-bottom: 1px solid var(--border-color);
-    border-radius: 0 0 0.5rem 0.5rem;
+    border-radius: 0 0 0.75rem 0.75rem;
+    /* Only downward, and only far enough to say "this is on top of the text
+       moving under it". */
+    box-shadow: 0 6px 16px -14px rgb(15 23 42 / 0.7);
   }
 
   .toolbar-group {
@@ -204,15 +351,22 @@ div#root {
   }
 
   .toolbar-btn:hover:not(:disabled) {
-    background-color: #f1f5f9;
-    color: var(--ink);
+    background-color: #eef2ff;
+    border-color: #e0e7ff;
+    color: var(--accent-strong);
   }
 
   /* Active = the caret is inside this mark/node. Ink fill, matching .btn-primary,
      because "on" has to be unmistakable at 2rem square. */
   .toolbar-btn[data-active="true"] {
+    background-image: linear-gradient(180deg, #1e293b, var(--ink));
     background-color: var(--ink);
     border-color: var(--ink);
+    color: #ffffff;
+    box-shadow: 0 2px 6px -2px rgb(15 23 42 / 0.5);
+  }
+
+  .toolbar-btn[data-active="true"]:hover:not(:disabled) {
     color: #ffffff;
   }
 
@@ -231,15 +385,21 @@ div#root {
     background-color: var(--surface-color);
     border: 1px solid var(--border-color);
     border-radius: 0.75rem;
+    /* Deeper than `.panel`: the sheet is the one thing on the desk that should
+       look like it could be picked up. */
     box-shadow:
       0 1px 2px rgb(15 23 42 / 0.04),
-      0 12px 28px -16px rgb(15 23 42 / 0.25);
+      0 2px 6px rgb(15 23 42 / 0.04),
+      0 24px 48px -28px rgb(15 23 42 / 0.4);
     /* ~44rem at 1rem holds roughly 72 characters a line. Claim text at full pane
        width runs past 100, which is unreadable for legal prose. */
     font-size: 1rem;
     line-height: 1.65;
     color: var(--text-color);
     text-wrap: pretty;
+    /* The one place the accent touches the prose. A slate caret on a white sheet
+       is genuinely hard to find at 1rem. */
+    caret-color: var(--accent);
   }
 
   @media (min-width: 640px) {
@@ -266,7 +426,12 @@ div#root {
     line-height: 1.25;
     margin: 0 0 1.25rem;
     padding-bottom: 0.75rem;
-    border-bottom: 1px solid var(--border-color);
+    /* A rule that fades out rather than stopping dead at the measure: the same
+       trick as the desk washes, at 1px. Transparent, not a colour, so it works
+       on any sheet tint. */
+    border-bottom: 1px solid transparent;
+    border-image: linear-gradient(90deg, var(--accent), rgb(14 165 233 / 0.35), transparent) 1;
+    color: var(--ink);
   }
 
   .editor h1:not(:first-child) {
@@ -308,14 +473,41 @@ div#root {
     animation: dialog-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
   }
 
+  /* A new chat bubble slides the last few pixels into place instead of appearing.
+     It is the only animation in the app tied to *content* rather than to a panel
+     opening, and it is what makes a reply feel like it arrived. */
+  .msg-in {
+    animation: rise-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* The skeleton's sweep. `animate-pulse` alone dims the whole block at once,
+     which reads as a broken image; a travelling highlight reads as loading. */
+  .shimmer {
+    background-image: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.65), transparent);
+    background-size: 200% 100%;
+    animation: shimmer 1.6s linear infinite;
+  }
+
   /* The two AI decoration bands (src/ai/highlight.ts). Two colours because they say
-     two different things, and the user sees them in the same place. */
+     two different things, and the user sees them in the same place. Rounded and
+     padded so a highlight over mid-sentence text looks drawn on rather than
+     selected — the browser's own selection is the shape we must not imitate. */
+  .ai-hl-selection,
+  .ai-hl-citation {
+    border-radius: 0.25rem;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    padding: 0.05em 0.1em;
+  }
+
   .ai-hl-selection {
-    background-color: rgb(56 189 248 / 0.22); /* sky — "this is your context" */
+    background-color: rgb(56 189 248 / 0.25); /* sky — "this is your context" */
+    box-shadow: inset 0 -1px 0 rgb(2 132 199 / 0.35);
   }
 
   .ai-hl-citation {
-    background-color: rgb(251 191 36 / 0.3); /* amber — "this is the answer" */
+    background-color: rgb(251 191 36 / 0.32); /* amber — "this is the answer" */
+    box-shadow: inset 0 -1px 0 rgb(217 119 6 / 0.4);
   }
 }
 
@@ -325,6 +517,26 @@ div#root {
   }
   to {
     opacity: 1;
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
   }
 }
 

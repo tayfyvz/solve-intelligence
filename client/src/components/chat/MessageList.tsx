@@ -49,9 +49,21 @@ function Thinking() {
   }, []);
 
   return (
-    <li className="flex justify-stretch">
-      <div className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[0.8125rem] text-slate-500">
-        <span className="animate-pulse">● ● ●</span> {STEPS[step]}
+    <li className="msg-in flex justify-stretch">
+      <div className="flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[0.8125rem] text-slate-500 shadow-sm">
+        {/* Three dots on staggered delays, rather than one pulse over a text
+            glyph: a wave reads as work in progress; a fading "● ● ●" reads as
+            something about to disappear. */}
+        <span aria-hidden="true" className="flex shrink-0 items-center gap-1">
+          {[0, 150, 300].map((delay) => (
+            <span
+              key={delay}
+              style={{ animationDelay: `${delay}ms` }}
+              className="h-1.5 w-1.5 animate-bounce rounded-full bg-indigo-400"
+            />
+          ))}
+        </span>
+        {STEPS[step]}
       </div>
     </li>
   );
@@ -107,7 +119,7 @@ export default function MessageList({
                 key={example}
                 type="button"
                 onClick={() => onExample(example)}
-                className="focus-ring rounded-md border border-slate-200 px-2 py-1 text-left text-[0.75rem] text-slate-600 hover:bg-slate-100"
+                className="focus-ring w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-left text-[0.75rem] text-slate-600 shadow-sm transition-all duration-150 hover:-translate-y-px hover:border-indigo-300 hover:text-indigo-800 hover:shadow"
               >
                 {example}
               </button>

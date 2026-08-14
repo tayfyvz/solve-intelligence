@@ -78,7 +78,7 @@ export default function Outline() {
       <button
         type="button"
         onClick={() => jump(entry.from, entry.to)}
-        className={`focus-ring w-full truncate rounded-md px-1.5 py-1 text-left text-[0.8125rem] transition-colors duration-150 hover:bg-slate-100 ${className}`}
+        className={`focus-ring w-full truncate rounded-md px-1.5 py-1 text-left text-[0.8125rem] transition-colors duration-150 hover:bg-indigo-50 hover:text-indigo-800 ${className}`}
       >
         {entry.label}
       </button>
@@ -95,7 +95,7 @@ export default function Outline() {
           Outline
         </h2>
         {all.length > 0 && (
-          <span className="text-[0.6875rem] tabular-nums text-slate-400">{all.length}</span>
+          <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[0.6875rem] font-medium tabular-nums text-slate-500">{all.length}</span>
         )}
       </div>
 
@@ -114,7 +114,7 @@ export default function Outline() {
             value={filter}
             placeholder="Filter…"
             onChange={(event) => setFilter(event.target.value)}
-            className="focus-ring mb-1 w-full rounded-md border border-slate-300 px-2 py-1 text-[0.8125rem]"
+            className="focus-ring mb-1.5 w-full rounded-full border border-slate-300 bg-white px-3 py-1 text-[0.8125rem] transition-colors duration-150 placeholder:text-slate-400 hover:border-slate-400"
           />
 
           {/* Bounded and scrollable, like the nested version list: sixty claims must not

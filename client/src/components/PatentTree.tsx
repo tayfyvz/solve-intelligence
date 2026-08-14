@@ -110,7 +110,7 @@ export default function PatentTree({
             type="button"
             disabled={selectDisabled}
             onClick={onCreate}
-            className="focus-ring flex items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-0.5 text-[0.6875rem] font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-50 disabled:opacity-50"
+            className="focus-ring flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[0.6875rem] font-medium text-slate-700 shadow-sm transition-all duration-150 hover:-translate-y-px hover:border-indigo-300 hover:text-indigo-700 hover:shadow disabled:translate-y-0 disabled:opacity-50 disabled:shadow-none"
           >
             <span aria-hidden="true">+</span> New patent
           </button>
@@ -120,7 +120,7 @@ export default function PatentTree({
             type="button"
             disabled={selectDisabled}
             onClick={onImport}
-            className="focus-ring flex items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-0.5 text-[0.6875rem] font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-50 disabled:opacity-50"
+            className="focus-ring flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[0.6875rem] font-medium text-slate-700 shadow-sm transition-all duration-150 hover:-translate-y-px hover:border-indigo-300 hover:text-indigo-700 hover:shadow disabled:translate-y-0 disabled:opacity-50 disabled:shadow-none"
           >
             <span aria-hidden="true">↥</span> Import .txt
           </button>
@@ -155,7 +155,7 @@ export default function PatentTree({
                     // "Open"-tagged patent, so the two read as one fact, not two.
                     badge={
                       open ? (
-                        <span className="shrink-0 rounded-full bg-sky-600 px-1.5 text-[0.625rem] font-semibold uppercase tracking-wide leading-4 text-white">
+                        <span className="shrink-0 rounded-full bg-gradient-to-r from-sky-600 to-sky-500 px-1.5 text-[0.625rem] font-semibold uppercase tracking-wide leading-4 text-white shadow-sm shadow-sky-600/30">
                           Open
                         </span>
                       ) : undefined
@@ -180,7 +180,7 @@ export default function PatentTree({
                     // the patent above them rather than as more patents.
                     // The rule is sky, matching the open row above it: the
                     // branch and its parent are one selected thing.
-                    <div className="ml-3 mt-0.5 border-l-2 border-sky-200 pl-2">
+                    <div className="ml-3 mt-0.5 border-l-2 border-sky-200/80 pl-2">
                       {versions.length === 0 ? (
                         <p className="px-1 py-1 text-[0.6875rem] text-slate-500">
                           No versions to show.
@@ -203,7 +203,7 @@ export default function PatentTree({
                                 }
                                 badge={
                                   version.version_number === selectedVersion ? (
-                                    <span className="shrink-0 rounded-full bg-sky-600 px-1.5 text-[0.625rem] font-semibold uppercase tracking-wide leading-4 text-white">
+                                    <span className="shrink-0 rounded-full bg-gradient-to-r from-sky-600 to-sky-500 px-1.5 text-[0.625rem] font-semibold uppercase tracking-wide leading-4 text-white shadow-sm shadow-sky-600/30">
                                       Open
                                     </span>
                                   ) : undefined
