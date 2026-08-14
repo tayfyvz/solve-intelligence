@@ -156,7 +156,11 @@ client/src/
 ├── contextFile.ts           # .txt validation
 ├── ai/{claims,selection,highlight,format}.ts   # claim spans, selection, the format fast-path
 └── components/
-    ├── {Editor,DocumentList,VersionBar,TxtDropZone}.tsx
+    ├── Banner.tsx           # the app bar: what is open, and the two save buttons
+    ├── PatentTree.tsx       # patents, with the open one expanded to its versions
+    ├── Editor.tsx           # TipTap, uncontrolled, remounted by key
+    ├── {Toolbar,TxtDropZone,SidePanel,Pager,TreeRow,InlineRename}.tsx
+    ├── {Modal,DirtyDialog,NewPatentDialog,Spinner,Timestamp}.tsx, time.ts
     └── chat/{ChatPanel,MessageList,Message,Composer,ContextChips,ProposalPrompt}.tsx
 ```
 
@@ -236,8 +240,9 @@ allowed; a missing row is 404; a missing/null `content` field is 422.
 
 ## 5. Task 2 Option A — AI editing
 
-> **Status: not implemented.** This section is forward design — the intended model, operation
-> vocabulary, apply pipeline and endpoint contract. No code in this section exists yet.
+> **Status: shipped.** This section was written as forward design and is kept in that voice; where
+> the shipped code diverges from it, the divergence is called out inline rather than silently
+> rewritten. `PLAN.md` §1 and §2 record every such decision.
 
 ### 5.1 Why structured operations, not HTML
 
@@ -453,12 +458,12 @@ land in another. All errors render in the UI, never only in the console.
 
 ## 8. Testing
 
-Roughly 20 tests, chosen for value rather than coverage percentage.
+Chosen for value rather than coverage percentage.
 
-> **Status:** the versioning, sanitiser and store tests are written. Every row below that exercises
-> the AI layer — the parse round-trip, the four README examples, the apply rules, the fake-planner
-> route test, `.txt` validation and ChatPanel — is **planned, not written**, because the code it
-> would cover does not exist yet (§5).
+> **Status: every row below is written and passing.** The count outgrew the "roughly 20" this
+> section originally planned for — 708 in total, 496 backend and 212 frontend — because the AI
+> layer arrived with four deterministic gates of its own. `PLAN.md` §31.2 is the single source of
+> truth for the number. What holds regardless of the count: **none of them requires an API key.**
 
 **Backend (`pytest`)**
 
@@ -506,9 +511,10 @@ Roughly 20 tests, chosen for value rather than coverage percentage.
 
 ## 10. Out of scope
 
-**Not building:** Option B (websockets, presence, CRDT); auth; autosave; version delete, rename,
-diff or branching; streaming responses; agent loops or RAG; persisted chat history; CI;
-USPTO amendment markup.
+**Not building:** Option B (websockets, presence, CRDT); auth; autosave; version delete, diff or
+branching; streaming responses; agent loops or RAG; persisted chat history; CI; USPTO amendment
+markup. *(Version **rename** was on this list and then shipped in Task 1 — it is in the UI, and
+leaving it here would teach the reader to distrust the rest of the list.)*
 
 **Known limitations, accepted deliberately for this submission:**
 

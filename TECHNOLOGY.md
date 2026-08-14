@@ -26,7 +26,7 @@ test tooling. Everything else was already in the scaffold.
 **One of those five is not small, and this document says so plainly.** `langgraph` brings 21
 transitive packages with it (§2.5). It is the only dependency here that costs more than a rounding
 error, and it is the only one whose section leads with the measured bill rather than the benefit.
-It passes criterion 2 — the graph is six named nodes and two edges' worth of routing, and drawing
+It passes criterion 2 — the graph is seven named nodes and three conditional edges, and drawing
 it on a whiteboard takes under a minute — but it would not have passed criterion 3 if the pipeline
 were a straight line. It isn't: it has a cycle.
 
@@ -216,23 +216,25 @@ condition for adopting it at all.
 **Why we need it — there is a genuine cycle.** The pipeline is not a chain:
 
 ```
-                 ┌──────────────── retry (max 2, failure text fed into the prompt)
-                 ▼                                                   │
-  route ──┬──▶ draft ──▶ judge ──(score < threshold)─────────────────┘
-          │                │
-          │             (pass)
-          │                ▼
-          ├──▶ plan ──▶ apply ──▶ verify ──▶ end
-          └──▶ clarify ─────────────────────▶ end
+                         ┌───────── retry (bounded, the judge's complaint fed into the prompt)
+                         ▼                                                   │
+  understand ──┬──▶ retrieve ──▶ draft ──▶ judge ──(fail, attempts left)─────┘
+               │        │                    │
+               │        │                 (pass)
+               │        └──▶ answer ─────────┼──────────────▶ verify ──▶ end
+               ├──▶ plan_ops ────────────────┤
+               └──(unresolved)───────────────┘
 ```
 
 Two structural facts drive the choice:
 
 1. **An LLM-as-judge node scores generated claim text and routes *back* to `draft` on failure.**
-   Bounded at two retries, with the judge's complaint appended to the retry prompt. That is a
-   cycle with state that accumulates across iterations.
-2. **The router node fans out to three mutually exclusive branches** — generative drafting,
-   mechanical operations, or clarification.
+   Bounded at two attempts by default, with the judge's complaint appended to the retry prompt.
+   That is a cycle with state that accumulates across iterations.
+2. **The `understand` node fans out to three mutually exclusive branches** — generative drafting,
+   mechanical operations, or a question — plus a fourth exit straight to `verify` when it could not
+   resolve the request at all. *(This section said "the router node". There is no router: it was
+   widened into `understand`, for the reason in §4.18.)*
 
 A cycle with a bounded retry budget, per-node responsibility separation, and a shared typed state
 object is exactly the shape a graph library exists for. Written as `if/elif` plus a `while
@@ -297,12 +299,17 @@ props hub — the exact thing that makes a component hard to modify live in an i
 |---|---|
 | documents, selected doc/version, version list, dirty flag, editor instance, load/save/create | chat messages, attached file, input text, the pending AI proposal (`ChatPanel` only) |
 
-The store is ~40 lines and readable in one screen.
+**This section used to end "the store is ~40 lines and readable in one screen". It is 617,** and
+that is worth correcting rather than quietly deleting, because the number was the argument. The
+scoping rule held — every field above is read by two or more components — but the *actions* grew:
+pagination, create, rename, two saves, and a request-ordering guard on each. The one-screen claim is
+gone; the shape it was defending is not, and it is what §4.11 and the "shared state only" invariant
+in `CLAUDE.md` still enforce. Recorded as C25 in PLAN §2.3.
 
 | Alternative | Rejected because |
 |---|---|
 | **`useState` in `App` + props** | Works, but drills a TipTap instance through the tree. Defensible; zustand is meaningfully cleaner for the sibling-communication case. |
-| **React Context** | No new dependency — but re-renders every consumer on any change, and needs a provider + reducer + memoisation to match what zustand does in 40 lines. More code, more concepts. |
+| **React Context** | No new dependency — but re-renders every consumer on any change, and needs a provider + reducer + memoisation to match what zustand does with a plain hook. More code, more concepts. |
 | **Redux Toolkit** | Actions, reducers, slices, thunks for ~8 state fields. Textbook over-engineering here. |
 | **TanStack Query** | Genuinely good for server cache — but we have a handful of endpoints and no polling, refetch or cache-invalidation needs. Concepts we'd never use. |
 | **Jotai / Valtio** | Comparable, less common. No reason to prefer them. |
@@ -996,7 +1003,7 @@ broken feature was one default value in `config.py`.**
 | HTML | **beautifulsoup4** (parse) + **nh3** (sanitise) |
 | Config | **pydantic-settings** |
 | LLM | openai 1.109 + **Structured Outputs** → validated operation plans |
-| AI pipeline | **langgraph 1.2** — router, drafter, LLM judge with a bounded retry cycle, apply, deterministic verify. **No checkpointer**; HITL between two runs |
+| AI pipeline | **langgraph 1.2** — understand, retrieve, planner/drafter, LLM judge with a bounded retry cycle, deterministic verify. **No checkpointer**; HITL between two runs |
 | Correctness | deterministic `verify()` over the applied document — numbering, cross-references, empty claims |
 | Tests | **pytest** (backend) + **vitest** & Testing Library (frontend) |
 | Lint | **ruff** (Python) + ESLint 9 flat config (TS) |
