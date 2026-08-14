@@ -85,7 +85,7 @@ export default function TxtDropZone({
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
       onDrop={onDrop}
-      className={`flex items-center gap-2 rounded-lg border border-dashed px-3 py-1.5 text-[0.8125rem] transition-colors ${
+      className={`flex items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-[0.8125rem] transition-colors ${
         over ? "border-sky-400 bg-sky-50" : "border-slate-300 bg-slate-50"
       }`}
     >
@@ -106,11 +106,12 @@ export default function TxtDropZone({
           </button>
         </span>
       ) : (
-        // Empty: no label next to the button. The button already says "Attach
-        // .txt"; a copy of that same fact in prose next to it was noise, not
-        // information — this flex-1 spacer is what keeps the button pinned to
-        // the right edge of the zone rather than collapsing to its own width.
-        <span className="min-w-0 flex-1" />
+        // Empty: a plain flex-1 spacer here left the dashed box mostly blank with
+        // the button crammed against its right edge — this hint fills that space
+        // and tells the user the whole zone (not just the button) accepts a drop.
+        <span className="min-w-0 flex-1 truncate text-slate-500">
+          Drop a .txt file here, or
+        </span>
       )}
 
       {/* Drag-and-drop is unusable by keyboard, so the hidden input is the real
