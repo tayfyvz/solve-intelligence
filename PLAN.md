@@ -9287,14 +9287,14 @@ runs with no API key. **Manual** = a scripted click-through, recorded in the sub
 
 ### 27.3 Cleanup
 
-- [ ] Rewrite `server/README.md` — it documents the pre-split 5-file layout and claims restarting
+- [x] Rewrite `server/README.md` — DONE (6D). It documented the pre-split 5-file layout and claimed restarting
       resets the DB. Both false. Reset is `rm server/data/app.db`; `docker compose down -v` for the
       anonymous volumes.
-- [ ] Delete any untracked `client/dist/` before zipping (`git ls-files client/dist` is empty;
+- [x] Delete any untracked `client/dist/` before zipping — DONE (6D). (`git ls-files client/dist` is empty;
       `dist` is already gitignored — C33).
-- [ ] Delete the untracked `client/tsconfig.tsbuildinfo` and `client/tsconfig.node.tsbuildinfo`
+- [x] `client/tsconfig.tsbuildinfo` — DONE (already gitignored at `client/.gitignore:31`; no stray files in the tree). and `client/tsconfig.node.tsbuildinfo`
       currently sitting in the working tree, and add `*.tsbuildinfo` to `client/.gitignore`.
-- [ ] `uv run ruff format . && uv run ruff check .` clean; `npm run lint` clean.
+- [x] `uv run ruff format . && uv run ruff check .` clean; `npm run lint` clean — DONE, verified at every commit.
 
 ### 27.4 Corrections found while building Step 6
 
@@ -9648,7 +9648,7 @@ deliverable; a checklist that claims them would be worse than no checklist.
 - [ ] Client `aiHttp` timeout **stays at `90_000`** — 4Z's measurement retired the planned raise to
       `100_000` (§3.4, §20.7) — and its stale `"> the server's 60 s"` comment is rewritten to name
       `ai_request_timeout_seconds = 75.0`. The graph deadline (`65.0`) is wired (§3.4).
-- [ ] `*.tsbuildinfo` added to `client/.gitignore`; the two stray files deleted.
+- [x] `*.tsbuildinfo` added to `client/.gitignore`; no stray files remain — DONE (6D).
 - [ ] **`CLAUDE.md` invariant 8 amended** in the same commit that introduces `versionSource`
       (§33.2).
 - [ ] A **"Production readiness"** section in `README.md` reproducing §28.2 and §28.3 in substance —
