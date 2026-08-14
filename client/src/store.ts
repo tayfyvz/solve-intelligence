@@ -62,6 +62,21 @@ interface DocumentState {
   versionNumber: number | null;
   versionName: string;
 
+  /**
+   * Why `versionNumber` last changed. Written in the SAME set() as versionNumber
+   * itself, so it can never disagree with it, and overwritten by EVERY subsequent
+   * change, so it can never get stuck. Nothing subscribes to it — ChatPanel reads it
+   * once, with getState(), inside the effect that observes the change, to tell "the
+   * user moved" (clear the transcript) from "we moved, because the user accepted an
+   * AI edit" (keep it).
+   *
+   * The one deliberate exception to the shared-state rule, justified by ATOMICITY,
+   * not sharing: it is a property of a store *transition*, and recording it anywhere
+   * else records it at a different moment — which is the bug, not the design.
+   * A failed save never reaches the set(), so it cannot leave "ai" behind.
+   */
+  versionSource: "user" | "ai" | null;
+
   /** May legitimately be "" — an emptied draft. Never test truthiness. */
   content: string | null;
   editor: Editor | null;
@@ -83,7 +98,17 @@ interface DocumentState {
   renameDocument(id: number, title: string): Promise<boolean>;
   renameVersion(n: number, name: string): Promise<boolean>;
   save(): Promise<boolean>;
-  saveAsNewVersion(): Promise<boolean>;
+  /**
+   * `name` is threaded straight through to the existing `createVersion(…, name)`, so
+   * the version list reads `AI: delete claim 3` instead of `Version 4`.
+   * `options.content` is the explicit HTML to save, defaulting to the live buffer, so
+   * keystrokes made between an AI apply and this POST are not silently folded into
+   * the AI's version. Every existing caller omits both and behaves exactly as before.
+   */
+  saveAsNewVersion(
+    name?: string,
+    options?: { source?: "user" | "ai"; content?: string },
+  ): Promise<boolean>;
   setEditor(e: Editor): void;
   clearEditor(e: Editor): void;
   setDirty(d: boolean): void;
@@ -194,6 +219,7 @@ const initialState = {
   versionsLimit: PAGE_SIZE,
   versionNumber: null as number | null,
   versionName: "",
+  versionSource: null as "user" | "ai" | null,
   content: null as string | null,
   editor: null as Editor | null,
   dirty: false,
@@ -321,6 +347,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         versionsOffset: 0,
         versionNumber: version.version_number,
         versionName: nameOf(version),
+        versionSource: "user",
         content: checkedContent(version),
         dirty: false,
         loading: false,
@@ -346,6 +373,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       set({
         versionNumber: version.version_number,
         versionName: nameOf(version),
+        versionSource: "user",
         content: checkedContent(version),
         dirty: false,
         loading: false,
@@ -498,7 +526,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
   },
 
-  async saveAsNewVersion() {
+  async saveAsNewVersion(name, options) {
     const { editor, documentId } = get();
     if (!editor || documentId === null) {
       set({ error: "There is no open document to save." });
@@ -507,11 +535,19 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const isCurrent = captureRequest();
     set({ saving: true, pendingAction: "saveAsNew", error: null });
     try {
-      const created = await createVersion(documentId, editor.getHTML());
+      const created = await createVersion(
+        documentId,
+        options?.content ?? editor.getHTML(),
+        name ?? null,
+      );
+      // NOTE: a discarded write returns here, so `versionSource` is untouched — the
+      // reason a failed or superseded save can never leave "ai" behind.
       if (!isCurrent()) return false;
       set({
         versionNumber: created.version_number,
         versionName: nameOf(created),
+        // The Banner's own button defaults to "user"; only ChatPanel passes "ai".
+        versionSource: options?.source ?? "user",
         // The server's sanitised echo is the truth after nh3 ran; moving
         // versionNumber changes the remount key, which rebuilds the editor
         // from exactly this content.

@@ -6,7 +6,8 @@ afterEach(cleanup);
 // jsdom has no layout engine and no scrollIntoView. The property is *absent*, so
 // `element.scrollIntoView({…})` is a TypeError thrown out of a click handler — a run
 // in which every assertion passed still fails. Nothing asserted anywhere depends on
-// scrolling actually happening, so a no-op is the honest stub, and CP-22 spies on it.
+// scrolling actually happening, so a no-op is the honest stub, and the citation test
+// in chatPanel.test.tsx spies on it.
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = function scrollIntoView() {};
 }

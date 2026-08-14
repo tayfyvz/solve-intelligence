@@ -100,9 +100,20 @@ function version(id: number, n: number, content = `<p>doc ${id} v${n}</p>`): Ver
   };
 }
 
-/** The store only ever calls `getHTML()` on the editor — that is the contract. */
+/**
+ * The store only ever calls `getHTML()`. The plugin lifecycle is `ChatPanel`'s, which
+ * App now mounts beside the editor — a stub without it throws out of an effect and
+ * fails every test in this file for a reason that has nothing to do with the shell.
+ */
 function fakeEditor(html = "<p>live</p>"): Editor {
-  return { getHTML: () => html } as unknown as Editor;
+  return {
+    getHTML: () => html,
+    isDestroyed: false,
+    registerPlugin: () => {},
+    unregisterPlugin: () => {},
+    on: () => {},
+    off: () => {},
+  } as unknown as Editor;
 }
 
 /** A tree row, not the pencil next to it: its name starts with the row's title. */
@@ -377,7 +388,9 @@ describe("App shell", () => {
     await user.click(screen.getByRole("button", { name: "Save as new version" }));
 
     await waitFor(() => expect(store().versionNumber).toBe(2));
-    expect(createVersion).toHaveBeenCalledWith(1, "<p>live</p>");
+    // The third argument is the version name, which only ChatPanel ever supplies;
+    // `null` is what `createVersion` defaulted to before it was threaded through.
+    expect(createVersion).toHaveBeenCalledWith(1, "<p>live</p>", null);
     // The server's sanitised echo, reached by remount rather than a prop write.
     await waitFor(() => expect(screen.getByTestId("editor").textContent).toBe("<p>created v2</p>"));
     expect(screen.queryByText("Unsaved changes")).toBeNull();

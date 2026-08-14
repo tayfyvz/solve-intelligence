@@ -6,6 +6,7 @@ import Editor from "./components/Editor";
 import NewPatentDialog from "./components/NewPatentDialog";
 import PatentTree from "./components/PatentTree";
 import SidePanel from "./components/SidePanel";
+import ChatPanel from "./components/chat/ChatPanel";
 import { useDocumentStore } from "./store";
 
 /**
@@ -316,7 +317,15 @@ export default function App() {
           onWidthChange={setRightWidth}
           resizable={isWide}
         >
-          <p className="text-[0.8125rem] text-slate-500">AI chat — coming next</p>
+          {/* Keyed on the DOCUMENT only. Keying it on the version too would destroy
+              the transcript at the instant the user accepts an AI change — including
+              the "Saved as version 4" bubble they need to read. The panel clears
+              itself on a *user* version switch instead (store `versionSource`). */}
+          <ChatPanel
+            key={documentId ?? "none"}
+            documentId={documentId}
+            versionNumber={versionNumber}
+          />
         </SidePanel>
       </div>
 

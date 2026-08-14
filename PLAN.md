@@ -9105,7 +9105,26 @@ That is the better story anyway — Proceed's whole purpose is to create the res
 "select version 3 in the top bar" survives a reload, a crash and a different machine, which an
 in-memory undo stack does not. **Demo it that way. Do not demo ⌘Z after Proceed.**
 
-### Exit gate 5C — `chatPanel.test.tsx` (31 tests, prefix `CP`)
+#### 26.12 Corrections found while building 5C
+
+Six defects, continuing the numbering from §25.7. Rows 31 and 32 were found by **mutation**, not by
+reading: both are places where a gate row asserts something that would pass without the code it
+names.
+
+| # | The spec said | The reality | The fix, as shipped |
+|---|---|---|---|
+| **27** | §26.5 places `localFormat` and its two regexes in `ChatPanel.tsx`; CP-29 calls it "directly, no panel" | A non-component export from a `.tsx` file trips **`react-refresh/only-export-components`**, and this repo lints at `--max-warnings 0`, so the export is a lint failure | `client/src/ai/format.ts` — a pure module beside 5B's `ai/` files. CP-29 imports it with no panel in sight, exactly as specified. Seven chat-track files instead of six |
+| **28** | §26.11's Retry snippet uses `className="btn btn-quiet …"` | There is no `.btn-quiet`; `index.css` defines four button shapes — `primary`, `secondary`, `light`, `outline-light` | `btn btn-secondary`, for Retry and for the proposal's Cancel |
+| **29** | §26.9: *"Every existing caller omits both new parameters and behaves exactly as before; S3 and S4 are unchanged and must stay green"* | True of **behaviour**, false of the **assertions**: threading `name` through makes the call `createVersion(id, html, null)`, and two shipped tests assert the exact argument list. `null` was already `createVersion`'s own default, so nothing on the wire moved | Both assertions gain the explicit `null`, with a comment saying why. A new store row, **S4b**, asserts the three things `ChatPanel` adds — explicit `name`, explicit `content` (NOT the live buffer) and `source: "ai"` — because nothing else could distinguish them |
+| **30** | CP-31(4): *"the buttons are `disabled` while `sending` is true"* | **Unobservable through the panel.** Every send appends the user's own bubble first, so the option bubble stops being the last message and its buttons unmount entirely — a stricter outcome than disabled, and one no assertion about `disabled` can see | Two assertions instead of one: the panel asserts the buttons are **gone** after a send, and a second row renders `Message` directly with `sending` and `isLast` to assert the `disabled` wiring where it is observable |
+| **31** | CP-29: *"The claim/scope rows assert the guard clause specifically"* | **They do not.** Deleting `localFormat`'s entire `\bclaims?\b\|\ball\b\|…` guard leaves every CP-29 row green — measured. Both patterns are anchored `^…$` with a fixed alternation for the selection noun, so no instruction containing a scope word can reach the guard: the regexes already reject them | The guard **stays** — it is defence in depth for the day someone widens a pattern, which is exactly when a false positive starts formatting the wrong thing — and a comment on the line says it is currently unreachable, so nobody reads CP-29 as proof that it works. The null rows still earn their place: they assert the **regexes** reject those instructions |
+| **32** | CP-07's companion: *"a `createVersion` that rejects **with** a message **while** the user has also navigated → the bubble **is** rendered"* | **Not realisable, because of the shipped store.** `saveAsNewVersion`'s catch is `if (!isCurrent()) return false` **before** it writes `error`, so a rejection that lands after a navigation leaves `error` null and is silent by construction. The scenario the row describes cannot be produced. It follows that `after.error === null` and `after.versionNumber !== verNum` are **behaviourally identical** here, which is why mutating one into the other leaves the gate green | CP-07 asserts the half that exists (a genuine failure, no navigation, speaks — plus the silent discarded-write case). The `error === null` form is kept because it does not depend on that coupling and matches `App.tsx`'s `messageOnFailure`. The equivalence is recorded here rather than left as a mystery for whoever next mutates this line |
+
+**On the `CLAUDE.md` gate row.** Invariant 8 was already amended on `main` — it was written that way
+when the plan was written. The rule and the code now agree for the first time; nothing needed
+editing in this commit, and the row is satisfied in substance (no documented violation ships).
+
+### Exit gate 5C — `chatPanel.test.tsx` (31 rows, 71 test functions — several rows parametrise or split)
 
 **Prefix `CP`** — chat panel. Collision-free against §2's corrections `C1`–`C35`, against the shipped
 backend `V`-series (`test_versioning.py` runs V1–V16, so a `V2` prefix would collide on every grep),

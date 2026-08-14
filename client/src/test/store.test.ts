@@ -530,7 +530,9 @@ describe("saving", () => {
 
     await expect(store().saveAsNewVersion()).resolves.toBe(true);
 
-    expect(createVersion).toHaveBeenCalledWith(1, "<p>live</p>");
+    // The third argument is the version name, which only ChatPanel ever supplies;
+    // `null` is what `createVersion` defaulted to before it was threaded through.
+    expect(createVersion).toHaveBeenCalledWith(1, "<p>live</p>", null);
     expect(store().versionNumber).toBe(3);
     expect(store().versionName).toBe("Version 3");
     // From the 201 body: the server's sanitised echo, not the editor's HTML.
@@ -542,6 +544,24 @@ describe("saving", () => {
     expect(store().versionsOffset).toBe(0);
     expect(store().versions.map((v) => v.version_number)).toEqual([3, 2, 1]);
     expect(store().versionsTotal).toBe(3);
+  });
+
+  // S4b — the three things ChatPanel adds, and only ChatPanel uses. `content` is the
+  // load-bearing one: between the AI's setContent and this POST the user can type,
+  // and folding those keystrokes into the version would put text in it that the AI
+  // never produced and the user never reviewed as part of that change.
+  it("saveAsNewVersion() honours an explicit name, content and source", async () => {
+    createVersion.mockResolvedValue({ ...version(1, 3, "<p>ai</p>"), name: "AI: delete claim 3" });
+    listVersions.mockResolvedValue(versionPage([1, 2, 3], { total: 3 }));
+
+    await expect(
+      store().saveAsNewVersion("AI: delete claim 3", { source: "ai", content: "<p>ai</p>" }),
+    ).resolves.toBe(true);
+
+    // NOT "<p>live</p>", which is what the editor holds.
+    expect(createVersion).toHaveBeenCalledWith(1, "<p>ai</p>", "AI: delete claim 3");
+    expect(store().versionSource).toBe("ai");
+    expect(store().versionNumber).toBe(3);
   });
 
   // S5 — capture-vs-bump. A save that lands after a switch must not clear the
