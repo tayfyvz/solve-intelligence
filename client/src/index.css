@@ -299,6 +299,16 @@ div#root {
   .dialog-panel {
     animation: dialog-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
   }
+
+  /* The two AI decoration bands (src/ai/highlight.ts). Two colours because they say
+     two different things, and the user sees them in the same place. */
+  .ai-hl-selection {
+    background-color: rgb(56 189 248 / 0.22); /* sky — "this is your context" */
+  }
+
+  .ai-hl-citation {
+    background-color: rgb(251 191 36 / 0.3); /* amber — "this is the answer" */
+  }
 }
 
 @keyframes fade-in {

@@ -8054,7 +8054,16 @@ suites that mount TipTap in React. 5B's tests build a schema-parsed doc directly
 `getSchema([StarterKit])` + `DOMParser.fromSchema(schema).parse(...)` — **no editor at all**, which
 is the preferred form.
 
-### Exit gate 5B — `aiClaims.test.ts` + `aiSelection.test.ts` (9 tests, prefix `X`)
+#### 25.7 Corrections found while building 5B
+
+Two defects, continuing the numbering from §24.3.
+
+| # | The spec said | The reality | The fix, as shipped |
+|---|---|---|---|
+| **25** | The Files list names three `src/ai/` modules and two test files | §25.5 also specifies **two CSS rules in `index.css`**, and they are not in the Files list. Without them `.ai-hl-selection` / `.ai-hl-citation` are class names nothing paints, so the whole phase is invisible in the browser | The two rules ship here, inside `@layer components` beside `.dialog-panel` — a class emitted by `highlight.ts` and defined nowhere is the kind of gap that is only found by looking at the running app |
+| **26** | X9(c): `{kind:"clear"}` → `DecorationSet.empty`, listed as one of four properties the test proves | **The runtime cannot distinguish the `clear` branch from its absence, so this row could not fail.** Measured: with the early return deleted, `meta.from`/`meta.to` are `undefined`, and `DecorationSet.create(doc, [Decoration.inline(undefined, undefined, …)])` returns **the `DecorationSet.empty` singleton itself** — `set === DecorationSet.empty` is `true`, `find()` is `[]`. Both assertions pass against the mutated plugin | The branch is guarded by **`tsc`, not by the test**: `from`/`to` do not exist on the `{kind:"clear"}` variant of `HighlightMeta`, so deleting the line is `TS2339` and `npm run build` goes red — verified. The row stays (it documents the intent and the identity assertion is the strongest available), with the guarantee attributed to the compiler in both the test and a comment on the line itself. **The other three X9 properties are falsifiable at runtime and were each proven so by mutation** |
+
+### Exit gate 5B — `aiClaims.test.ts` + `aiSelection.test.ts` (9 rows, 23 test functions — X1/X2, X3 and X6–X9 parametrise or split)
 
 *(Prefix `X`, not `S`: the shipped store tests already own `S1`–`S8` — §1.5 row 21.)*
 
