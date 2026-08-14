@@ -223,7 +223,7 @@ runtime-fatal, and the pair-programming round is a live defence of these documen
 | C5 | Seed insert `id=1,2` unconditional | Harmless only because the DB is `:memory:`. With a file DB it raises `IntegrityError` on the **second** boot and the app never starts. | File DB + idempotent seed **in the same commit** (§7–§9 are one commit boundary). |
 | C6 | Bind-mount masks the image `.venv` | Host `.venv` is macOS-arm64/Py3.14; inside Linux the interpreter symlink dangles. | Anonymous volume `- /usr/src/app/.venv`. ⚠️ Compose **reuses** anonymous volumes on recreate → document `docker compose down -v`. |
 | C7 | Emotion removal = deps + `vite.config.ts` | `client/tsconfig.json:19` **also** sets `jsxImportSource`. Miss it and `tsc && vite build` fails. | Remove component + **both** entries + babel block + 3 deps, one commit. |
-| **C17** | `HTMLFormatter(void_element_close_prefix="")` fixes `<br/>` → `<br>` | **The prescribed fix is broken.** That constructor leaves `entity_substitution=None`, which **disables entity escaping**: `<p>a &amp; b &lt;script&gt;</p>` renders as `<p>a & b <script></p>` — escaped text becomes live markup, round-trip breaks on any `&`, and invalid HTML reaches the client. | `HTMLFormatter(entity_substitution=EntitySubstitution.substitute_html, void_element_close_prefix="")`, with a dedicated test (§15 gate T4). |
+| **C17** | `HTMLFormatter(void_element_close_prefix="")` fixes `<br/>` → `<br>` | **The prescribed fix is broken.** That constructor leaves `entity_substitution=None`, which **disables entity escaping**: `<p>a &amp; b &lt;script&gt;</p>` renders as `<p>a & b <script></p>` — escaped text becomes live markup, round-trip breaks on any `&`, and invalid HTML reaches the client. | `HTMLFormatter(entity_substitution=EntitySubstitution.substitute_xml, void_element_close_prefix="")`, with a dedicated test (§15 gate T4). *(The argument was `substitute_html` until 3A measured it naming every non-ASCII character — see §15.1.)* |
 
 ### 2.2 Design gaps that produce wrong output
 
@@ -1927,7 +1927,7 @@ argument; `code` reaches the engine only inside a `<pre>` block or inline within
 
 ```python
 FORMATTER = HTMLFormatter(
-    entity_substitution=EntitySubstitution.substitute_html,   # MANDATORY — see below
+    entity_substitution=EntitySubstitution.substitute_xml,    # MANDATORY — see below
     void_element_close_prefix="",                             # `<br>` not `<br/>`  (C17)
 )
 ```
@@ -1939,6 +1939,21 @@ FORMATTER = HTMLFormatter(
   to `None`, which *disables escaping*: `<p>a &amp; b &lt;script&gt;</p>` serialises as
   `<p>a & b <script></p>` — escaped text becomes live markup and invalid HTML reaches the client.
   This is C17, the worst defect found in the whole design review, and it gets its own test (T4).
+- **`substitute_xml`, not `substitute_html` — corrected at 3A, measured.** An earlier draft of this
+  section specified `substitute_html`. Both enable escaping, so both close C17; they differ on
+  everything else. `substitute_html` also *names every non-ASCII character*, so `café — 3°`
+  serialises as `caf&eacute; &mdash; 3&deg;` while TipTap emits the characters raw — making
+  **identity false for any patent containing an em-dash, a degree sign, a Greek letter or an
+  accent**, which is most of them. Both seeds are pure ASCII, so T1/T2 would never have caught it,
+  and the failure is silent: idempotence still holds, so `verify` accepts the edit and the document
+  merely churns bytes on every round trip until the dirty flag means nothing. `substitute_xml`
+  escapes exactly `&`, `<` and `>` — precisely what the browser's serialiser does. **T4 carries a
+  second row asserting a non-ASCII document round-trips byte-identically.**
+
+  Two residual normalisations, both idempotent, both accepted (§2.4): a non-breaking space
+  collapses to an ordinary space (`_collapse_whitespace` uses `\s+`, and `\xa0` is `\s`), and a
+  bare `>` in the input is escaped to `&gt;` — neither is a shape TipTap emits, so neither is
+  canonical input.
 
 #### 15.2 The model
 
@@ -2088,8 +2103,8 @@ def _strip_prefix(el: Tag) -> tuple[int, str] | None:
     i = 0
     finished = False
     for node in list(el.descendants):
-        if not isinstance(node, NavigableString):
-            continue
+        if type(node) is not NavigableString:      # exact type: Comment and CData
+            continue                              # subclass NavigableString, and are not text
         s = str(node)
         j = 0
         while j < len(s) and i < len(want):
@@ -2103,13 +2118,19 @@ def _strip_prefix(el: Tag) -> tuple[int, str] | None:
         rest = s[j:]
         if i >= len(want):
             rest = rest.lstrip()                  # consume the prefix's trailing whitespace,
-            finished = True                       # even when it lives in a later text node
+            finished = bool(rest)                 # even when it lives in a later text node
         node.replace_with(NavigableString(rest))
         if finished:
             break
     _drop_empty_leading_inlines(el)
     return int(m.group(1)), m.group(2)
 ```
+
+**`finished = bool(rest)`, not `finished = True` — corrected at 3A.** In the split case
+`<p><strong>1.</strong> A device</p>` the node carrying `"1."` has nothing after the separator, so
+setting `finished` unconditionally breaks out of the loop before the *following* node's leading
+space is stripped, and the block's html comes out `" A device"`. The strip is not finished until a
+node actually yields text; T12's third row is the test.
 
 **`_drop_empty_leading_inlines(el)`** removes, from the front of `el`, any inline element left with
 no text (`not t.get_text().strip()` and no `img`/`br` descendant) — `.decompose()`. Without it,
@@ -2208,6 +2229,16 @@ block whose tag is in `HEADING_TAGS`, else `len(blocks)`; `preamble = blocks[:he
 - **leading orphans** — blocks appearing before the first prefix hit inside the region, e.g.
   `<p>What is claimed is:</p>` sitting under the heading — are appended to **`preamble`**, not to
   claim 1. Otherwise "make claim 1 bold" bolds them.
+
+**Step 5 — restore prefixes outside the region. Added at 3A; without it parse loses content.**
+Step 2 strips a prefix from *every* `<p>` that matches, because it runs before step 3 knows where
+the claims region is. Every block that does **not** end up starting a claim must therefore have its
+prefix put back into `Block.html`: `blocks[i].html = f"{n}{sep} " + blocks[i].html` for each `i`
+outside `[start, end)`. Two shapes hit this, and both are shapes the design explicitly supports —
+a Background reading `<p>1. Field of the Invention</p>` (the C9 scenario) silently lost its
+numbering, and so did the lone claim of a heading-less one-claim document, which the ≥2 rule
+deliberately declines to treat as a claims region (§2.4). Leading orphans and a claim's
+continuation blocks are unaffected: by construction neither carries a prefix.
 
 Duplicate, out-of-order or skipped numbers are recorded verbatim. **Parse never warns and never
 raises**; `apply_plan` (§18 step 2) is where duplicates produce a warning, and renumber is where
@@ -2416,13 +2447,13 @@ One function, three callers: `_plan_ops` (§22.5), `_retrieve` (§22.4) and — 
 | T1 | `test_seed_1_round_trips_byte_identically` | `render(parse(SEED_1)) == SEED_1`. **Write this first; everything rests on it.** |
 | T2 | `test_seed_2_round_trips_byte_identically` | `render(parse(SEED_2)) == SEED_2` |
 | T3 | `test_render_parse_is_idempotent` | Parametrised over: pretty-printed seed body, `<p>1. <strong>x</strong></p>`, `<p>a<br/>b</p>`, `<p>  spaced   out  </p>`, **`<div><p>1. a</p><p>2. b</p></div>`**, **`<div>loose<p>a</p></div>`**, **`<div><div><p>x</p></div></div>`** → `f(y) == f(f(y))`; the three `div` cases additionally assert the output contains **no `<div`** and **no `<p>` nested inside a `<p>`** (`"<p><p" not in out`), and that the first yields 2 claims under an `<h1>Claims</h1>` prefix; and the pretty-printed Patent 1 body converges on `SEED_1` exactly |
-| T4 | `test_entities_survive_the_round_trip` | `<p>a &amp; b &lt;x&gt; &quot;q&quot; it's</p>` → unchanged under `f`, and the output contains no bare `<script`. **Guards C17** — fails loudly if `entity_substitution` is ever dropped from `FORMATTER`. **Do not delete this as "redundant with T1": both seeds are entity-free.** |
+| T4 | `test_entities_survive_the_round_trip` | `<p>a &amp; b &lt;x&gt; "q" it's</p>` → unchanged under `f`, and the output contains no bare `<script`. **The fixture said `&quot;q&quot;` and could not be "unchanged": a correct serialiser emits `"`, and so does TipTap, so `&quot;` was never canonical input — corrected at 3A.** **Second row, added at 3A:** `<p>café — 3° … μm ±5 Ω</p>` → unchanged under `f`, which is what fails under `substitute_html` (§15.1). **Guards C17** — fails loudly if `entity_substitution` is ever dropped from `FORMATTER`. **Do not delete this as "redundant with T1": both seeds are entity-free.** |
 | T5 | `test_engine_modules_never_import_openai_or_langgraph` | The module list is **derived, never enumerated**: `sorted(p.stem for p in Path(app/ai).glob("*.py")) - {"__init__", "prompts", "llm", "graph"}`, computed at collection time and used as the parametrisation. For each name, import `app.ai.{name}` in a **fresh interpreter** (`subprocess.run([sys.executable, "-c", ...])`) and assert **both** `"openai" not in sys.modules` **and** `"langgraph" not in sys.modules`. The test additionally asserts the derived list is non-empty, so a broken glob cannot make it vacuously pass. *Invariant 1 was prose-only in every prior draft, and one careless import during the live round silently deletes the property. Derivation is what makes the test correct at 3A — when only `document` and `outline` exist — and still correct at 4C without anyone remembering to edit it. The earlier spec both enumerated eight modules literally and claimed the list was derived; the literal list made the test **red at 3A**, since six of the eight did not yet exist.* |
 | T6 | `test_parse_structure` | Parametrised over both seeds: blocks-per-claim `[5,1,1,4,1,5,1,1]` / `[6,1,1,1,1,1,5,1,1]`; 8 / 9 claims; every `separator == "."`; `claims_heading == Block("h1","Claims")`; `preamble == []`; `postamble == []`; uids are `1..n` and distinct |
 | T7 | `test_degenerate_inputs_never_raise` | Parametrised over 10 shapes (`""`, `"   "`, `"<p></p>"`, `"not html"`, `"<p>1. only one claim</p>"`, `"<div><p>1. a</p><p>2. b</p></div>"`, `"<p>1. a<p>2. b"`, `"<p>2024. In prior art</p><p>3.5 mm</p>"`, `"<h1>Claims</h1>"`, `"<p>&lt;script&gt;</p>"`) → no exception; `render(parse(x))` is a `str`; `""` → `""`. Plus a 15-deep `<div>` nest → no exception and no `RecursionError` |
-| T8 | `test_build_outline` | Both seeds: 8 / 9 claim lines; `[+4 more paragraphs]` on Patent 1 claim 1; **no `<` character anywhere**; `len(out) <= max_chars`; header line exact. **Plus the truncation tiers, on a synthetic 60-claim document** (each claim ~400 chars of filler, under an `<h1>Claims</h1>`): at `max_chars=100_000` no truncation and 60 claim lines; at `max_chars=1_200` the result satisfies `len(out) <= 1_200`, contains exactly 20 claim lines plus **one** line matching `… (claims 11–50 omitted) …`, the first line is claim 1 and the last claim line is claim 60, and every claim line is `<= 60` characters of claim text (tier 3 was reached); and the whole tier ladder is deterministic — calling `build_outline` twice returns the identical string |
+| T8 | `test_build_outline` | Both seeds: 8 / 9 claim lines; `[+4 more paragraphs]` on Patent 1 claim 1; **no `<` character anywhere**; `len(out) <= max_chars`; header line exact. **Plus the truncation tiers, on a synthetic 60-claim document** (each claim ~400 chars of filler, under an `<h1>Claims</h1>`): at `max_chars=100_000` no truncation and 60 claim lines; at **`max_chars=1_600`** the result satisfies `len(out) <= 1_600`, contains exactly 20 claim lines plus **one** line matching `… (claims 11–50 omitted) …`, the first line is claim 1 and the last claim line is claim 60, and every claim line is `<= 60` characters of claim text (tier 3 was reached); and the ladder **bottoms out rather than looping** — `build_outline(doc, max_chars=1)` returns the identical string. **The cap was `1_200` and that is unreachable by construction, measured at 3A:** tier 4 keeps ten claim lines at each end plus the omitted-range line, and at tier 3's 60-character limit each costs ~67 characters, so the shortest outline this document can produce is **1 525 characters**. §15.6 already says "tier 4 is not a guarantee of length"; the `1_200` row contradicted it, and the length bound has been replaced by the bottoms-out assertion, which is the property that actually matters |
 | T9 | `test_block_level_tags_survive` | Two assertions. **(a) The set equation**: `BLOCK_TAGS == set(app.sanitize.ALLOWED_TAGS) - INLINE_ONLY_TAGS`, and `INLINE_ONLY_TAGS <= set(app.sanitize.ALLOWED_TAGS)`. Written against the imported constants, so a tag added to the sanitiser without a decision about the engine fails here — the previous spec pinned a hand-picked sample and would have passed straight through such a change. **(b) The behaviour**: `<p>a</p><hr><ul><li>x</li><li>y</li></ul><blockquote><p>q</p></blockquote><h4>h</h4>` round-trips byte-identically. *Pairs with V11: `nh3` allows these, so the engine must not destroy them* |
-| T10 | `test_build_context` | Both seeds: contains every claim's **full** first-block text (not truncated at 240); block count per claim matches T6; `[1]`-style numbering; `len(out) <= max_chars`. Plus a synthetic 200 KB single-claim document → still `<= max_chars` and ends with the truncation tail |
+| T10 | `test_build_context` | Both seeds: contains every claim's **full** first-block text (not truncated at 240); block count per claim matches T6; `[1]`-style numbering; `len(out) <= max_chars`. Plus two 200 KB pathological documents. **Corrected at 3A:** a single claim of one 200 KB *paragraph* is bounded by **tier 4** (which caps the first block at 600 chars) and comes out at 814 characters — it never reaches the hard cut, so it cannot assert the tail. Tier 5 is only reachable by a claim with *many* paragraphs, because tier 3 caps each of those at 200 characters and 1 000 of them is still 200 KB. Both shapes are asserted: the many-block document lands at exactly `max_chars` and ends with the tail; the one-huge-paragraph document is `<= max_chars`. The guarantee — `len(build_context(doc)) <= max_chars` always — holds either way; only the *tier that delivers it* differs |
 | T11 | `test_pre_block_whitespace_is_preserved` | `<pre><code>def f():\n    return 1\n</code></pre>` round-trips byte-identically (`NO_COLLAPSE_TAGS`) |
 | T12 | `test_strip_prefix_descends_and_handles_split_nodes` | Parametrised: `<p><strong>1. A x</strong></p>` → `marks=("strong",)`, `html="A x"`; `<p>1. <strong>A x</strong></p>` → identical parse; `<p><strong>1.</strong> A x</p>` → `marks=()`, `html="A x"`, **no empty `<strong>` left**; `<p><em><strong>1. A x</strong></em></p>` → `marks=("em","strong")` |
 | T13 | `test_claims_heading_variants_and_fallback` | Parametrised: `<h1>CLAIMS</h1>`, `<h2>What is claimed is:</h2>`, `<h1>We Claim</h1>`, **`<h2>Patent Claims</h2>`**, **`<h1>The Claims of the Invention</h1>`** all detected; **`<h2>Comparison with the claims of US 1,234,567 and its family</h2>` (7 words) is NOT detected**; a heading-less two-claim doc detected by the ≥2 fallback; a heading-less one-claim doc → `claims == []`; `<h1>Claims</h1><p>What is claimed is:</p><p>1. a</p><p>2. b</p>` → the orphan lands in **preamble**, claim 1 has one block |
