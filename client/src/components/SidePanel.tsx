@@ -25,6 +25,26 @@ export interface SidePanelProps {
 
 const clamp = (width: number) => Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, width));
 
+/** A real chevron, not a `‹` glyph: the text characters rendered thin and tiny
+ *  at every size that fit, which is most of why the control was hard to see.
+ *  aria-hidden because both buttons already carry a name. */
+function Chevron({ direction }: { direction: "left" | "right" }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-3.5 w-3.5 shrink-0"
+    >
+      <path d={direction === "left" ? "M12.5 4.5 7 10l5.5 5.5" : "M7.5 4.5 13 10l-5.5 5.5"} />
+    </svg>
+  );
+}
+
 /**
  * A collapsible, drag-resizable column. Deliberately a pointer handler and a
  * number in the parent's state rather than a resizable-panel dependency —
@@ -71,17 +91,16 @@ export default function SidePanel({
 
   if (collapsed) {
     return (
-      <div className="flex shrink-0 lg:w-9">
+      <div className="flex shrink-0 lg:w-10">
         <button
           type="button"
           aria-expanded={false}
           aria-label={`Expand ${label} panel`}
+          title={`Expand ${label} panel`}
           onClick={() => onCollapsedChange(false)}
-          className="focus-ring flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-2 py-2 text-slate-500 transition-colors duration-150 hover:bg-slate-50 lg:flex-col lg:py-4"
+          className="focus-ring flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-2 py-2 text-slate-600 shadow-sm transition-colors duration-150 hover:border-sky-300 hover:bg-sky-50 hover:text-sky-700 lg:flex-col lg:py-4"
         >
-          <span aria-hidden="true" className="text-xs">
-            {side === "left" ? "›" : "‹"}
-          </span>
+          <Chevron direction={side === "left" ? "right" : "left"} />
           {/* Vertical only where the rail is a column; stacked, it reads across. */}
           <span className="text-xs font-semibold uppercase tracking-wide lg:[writing-mode:vertical-rl]">
             {label}
@@ -100,16 +119,19 @@ export default function SidePanel({
     >
       <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-1.5 overflow-hidden rounded-xl border border-slate-200 bg-white p-2.5 shadow-sm">
         <div className={`flex ${side === "left" ? "justify-end" : "justify-start"}`}>
+          {/* A bordered, labelled control rather than a 20px glyph: at rest the
+              old one was a grey chevron on white that readers did not find, and
+              a collapse they cannot find is a collapse they do not use. */}
           <button
             type="button"
             aria-expanded={true}
             aria-label={`Collapse ${label} panel`}
+            title={`Collapse ${label} panel`}
             onClick={() => onCollapsedChange(true)}
-            className="focus-ring flex h-5 w-5 items-center justify-center rounded-md text-slate-500 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-700"
+            className="focus-ring flex h-6 items-center gap-1 rounded-md border border-slate-300 bg-slate-50 px-1.5 text-[0.6875rem] font-medium text-slate-600 transition-colors duration-150 hover:border-sky-300 hover:bg-sky-50 hover:text-sky-700"
           >
-            <span aria-hidden="true" className="text-xs">
-              {side === "left" ? "‹" : "›"}
-            </span>
+            <Chevron direction={side === "left" ? "left" : "right"} />
+            <span>Hide</span>
           </button>
         </div>
         {children}
@@ -133,7 +155,9 @@ export default function SidePanel({
           event.preventDefault();
           onWidthChange(clamp(width + direction * STEP * (side === "left" ? 1 : -1)));
         }}
-        className="focus-ring mx-0.5 hidden w-1.5 shrink-0 cursor-col-resize rounded-full bg-transparent transition-colors duration-150 hover:bg-slate-300 lg:block"
+        // Visible at rest, like the collapse button: a drag target you have to
+        // discover by sweeping the mouse is not a drag target.
+        className="focus-ring mx-0.5 hidden w-1.5 shrink-0 cursor-col-resize rounded-full bg-slate-200 transition-colors duration-150 hover:bg-sky-400 lg:block"
       />
     </div>
   );

@@ -73,23 +73,33 @@ export default function TreeRow({
         aria-current={selected ? "true" : undefined}
         aria-expanded={expanded}
         onClick={onSelect}
-        className={`focus-ring min-w-0 flex-1 rounded-md px-2 py-1.5 text-left transition-colors duration-150 disabled:opacity-50 ${
+        // Selected is a *colour*, not a shade: on a slate rail a white-on-slate
+        // row is easy to miss, and "which patent am I in" is the one question
+        // this tree exists to answer. The left bar carries it at a glance even
+        // when the row is scrolled to the edge of vision.
+        className={`focus-ring min-w-0 flex-1 rounded-md py-1.5 pr-2 text-left transition-colors duration-150 disabled:opacity-50 ${
           selected
-            ? "border border-slate-200 bg-white shadow-sm"
-            : "border border-transparent hover:bg-slate-200/60"
+            ? "border border-sky-300 border-l-[3px] border-l-sky-500 bg-sky-50 pl-[calc(0.5rem-2px)] shadow-sm"
+            : "border border-transparent pl-2 hover:bg-slate-200/60"
         }`}
       >
         <span className="flex min-w-0 items-center gap-1.5">
           <span
             className={`min-w-0 flex-1 truncate text-[0.8125rem] leading-5 ${
-              selected ? "font-semibold text-slate-900" : "text-slate-700"
+              selected ? "font-semibold text-sky-900" : "text-slate-700"
             }`}
           >
             {label}
           </span>{" "}
           {badge}
         </span>{" "}
-        <span className="block truncate text-[0.6875rem] leading-4 text-slate-500">{meta}</span>
+        <span
+          className={`block truncate text-[0.6875rem] leading-4 ${
+            selected ? "text-sky-700" : "text-slate-500"
+          }`}
+        >
+          {meta}
+        </span>
       </button>
       {/* opacity-60 at rest rather than hidden-until-hover: an affordance nobody
           can see is one nobody uses, and hover does not exist on touch. */}

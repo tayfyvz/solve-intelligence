@@ -155,7 +155,7 @@ export default function PatentTree({
                     // "Open"-tagged patent, so the two read as one fact, not two.
                     badge={
                       open ? (
-                        <span className="shrink-0 rounded-full bg-sky-50 px-1.5 text-[0.625rem] font-semibold uppercase tracking-wide leading-4 text-sky-700 ring-1 ring-sky-100">
+                        <span className="shrink-0 rounded-full bg-sky-600 px-1.5 text-[0.625rem] font-semibold uppercase tracking-wide leading-4 text-white">
                           Open
                         </span>
                       ) : undefined
@@ -178,7 +178,9 @@ export default function PatentTree({
                   {open && (
                     // Indented and rule-marked, so the versions read as part of
                     // the patent above them rather than as more patents.
-                    <div className="ml-3 mt-0.5 border-l border-slate-200 pl-2">
+                    // The rule is sky, matching the open row above it: the
+                    // branch and its parent are one selected thing.
+                    <div className="ml-3 mt-0.5 border-l-2 border-sky-200 pl-2">
                       {versions.length === 0 ? (
                         <p className="px-1 py-1 text-[0.6875rem] text-slate-500">
                           No versions to show.
@@ -201,7 +203,7 @@ export default function PatentTree({
                                 }
                                 badge={
                                   version.version_number === selectedVersion ? (
-                                    <span className="shrink-0 rounded-full bg-sky-50 px-1.5 text-[0.625rem] font-semibold uppercase tracking-wide leading-4 text-sky-700 ring-1 ring-sky-100">
+                                    <span className="shrink-0 rounded-full bg-sky-600 px-1.5 text-[0.625rem] font-semibold uppercase tracking-wide leading-4 text-white">
                                       Open
                                     </span>
                                   ) : undefined
