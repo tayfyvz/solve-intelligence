@@ -30,8 +30,17 @@ from app.ai.graph import (
     run_plan,
 )
 from app.ai.nodes import DEADLINE_MESSAGE, JUDGE_SKIPPED_NOTE, NO_PLAN_MESSAGE
-from app.ai.outline import build_context, claims_excerpt, content_tokens, section_excerpt
-from app.ai.schemas import Answer, Citation, EditPlan, JudgeVerdict, Op
+from app.ai.outline import (
+    OUTLINE_HEADER,
+    SPEC_HEADER,
+    build_context,
+    build_outline,
+    build_spec,
+    claims_excerpt,
+    content_tokens,
+    section_excerpt,
+)
+from app.ai.schemas import Answer, Citation, EditPlan, JudgeVerdict, Op, Retrieved
 from app.ai.understand import CAPABILITY_STATEMENT, WHICH_CLAIM
 from app.config import get_settings
 from app.data import SEED_DOCUMENTS
@@ -626,6 +635,10 @@ SPEC_PATENT = (
         # view itself; draft reads it off `Retrieved`. Two routes, one document.
         ("edit_ops", "plan", lambda call: call.args[3]),
         ("generate", "draft", lambda call: call.args[1].spec_text),
+        # The judge too. Its check 4 asks whether the draft uses the same words as "the
+        # rest of the document" — a question it could not actually answer, because the
+        # description is where a patent defines its vocabulary and it had never seen one.
+        ("generate", "judge", lambda call: call.args[1].spec_text),
     ],
 )
 def test_both_editing_nodes_are_shown_the_specification_body(
@@ -773,3 +786,41 @@ def test_a_document_with_no_specification_says_so_rather_than_going_blank() -> N
     )[0]["content"]
     assert prompts.NO_SPEC_NOTE in system
     assert "--- SECTIONS BEFORE THE CLAIMS ---" not in system
+
+
+def test_no_prompt_prints_a_section_header_its_own_content_already_carries() -> None:
+    """Each view renders its own header — `OUTLINE_HEADER`, "RELEVANT CLAIMS, IN FULL",
+    `SPEC_HEADER` — and four templates printed a second copy of it just above the
+    placeholder. Harmless but confusing: two identical banners read as two blocks, and
+    the model has to work out that the second one is empty.
+
+    Asserted by rendering every prompt a node can build, because the templates are the
+    only place this can regress and a comment would not have caught it the first time.
+    """
+    doc = parse(SPEC_PATENT)
+    outline, claims = build_outline(doc), claims_excerpt(doc, [1])
+    spec = build_spec(doc, content_tokens("collar")).text
+    retrieved = Retrieved(claim_numbers=[1], claims_text=claims, spec_text=spec, outline=outline)
+    plan = EditPlan(status="ok", message="", operations=[INSERT_CLAIM])
+
+    systems = {
+        "plan": prompts.build_plan_messages("i", outline, claims, spec, "", [], None),
+        "draft": prompts.build_draft_messages("i", retrieved, [], None, None),
+        "judge": prompts.build_judge_messages("i", retrieved, plan),
+        "answer": prompts.build_answer_messages("i", retrieved, []),
+    }
+    for node, messages in systems.items():
+        system = messages[0]["content"]
+        assert system.count(OUTLINE_HEADER) == 1, node
+        assert system.count("RELEVANT CLAIMS, IN FULL") <= 1, node
+        assert system.count(SPEC_HEADER) <= 1, node
+
+
+def test_a_request_that_resolved_no_claim_says_so_instead_of_going_blank() -> None:
+    """`claims_excerpt` returns "" when the understanding resolved no claim, which is
+    legitimate — a document-wide `replace_text` needs none. Left blank it reads as a
+    document with no claims at all, and that is the premise of a rule-4(c) refusal
+    ("names a claim that does not exist"), so the planner could talk itself out of a
+    perfectly good edit."""
+    system = prompts.build_plan_messages("i", "OUTLINE", "", "", "", [], None)[0]["content"]
+    assert prompts.NO_CLAIMS_NOTE in system
