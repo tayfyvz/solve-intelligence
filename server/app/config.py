@@ -13,114 +13,81 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     database_url: str = "sqlite:///./data/app.db"
-    # NoDecode: pydantic-settings parses a list field as JSON *in the env source*,
-    # before any validator runs, so `CORS_ORIGINS=http://a,http://b` — the form
-    # everyone writes — would raise a JSONDecodeError at import, before there is
-    # an app to report it. NoDecode hands the raw string to the validator below.
+    # NoDecode: pydantic-settings parses a list field as JSON before any validator
+    # runs, so `CORS_ORIGINS=http://a,http://b` — the form everyone writes — would
+    # raise at import. NoDecode hands the raw string to the validator below.
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
 
-    # SecretStr, not str: any repr() of this object — a log line, a ValidationError that
-    # quotes its input, a debugger frame in a traceback — would otherwise print the live
-    # key in full. SecretStr renders ********** everywhere and hands over the real value
-    # only to an explicit .get_secret_value(). There are exactly two such call sites.
+    # SecretStr, not str: any repr of this object — a log line, a validation error,
+    # a debugger frame — would otherwise print the live key in full.
     openai_api_key: SecretStr | None = None
     openai_model: str = "gpt-5.2-2025-12-11"
-    # Used ONLY by scripts/smoke_llm.py. The per-call budget the app uses is
-    # `ai_node_timeout_seconds` below; wiring the wrong one is a silent 5x error.
-    openai_timeout_seconds: float = 60.0
 
     max_content_bytes: int = 1_000_000  # save path
     max_html_chars: int = 200_000  # AI input
     max_instruction_chars: int = 2_000
     max_context_chars: int = 40_000
-    # The Q&A branch's context budget. Set ABOVE `max_html_chars` on purpose: rendering a
-    # document as context costs ~1.0-1.05x its HTML, so at 220,000 every document this app
-    # will accept at all is read WHOLE, and the "I did not see all of…" warning is
-    # unreachable in production. A document too big for this is too big for `/api/ai/chat`
-    # and gets a clean 413 first.
-    #
-    # MEASURED, not guessed, on a 196,395-char patent — the ceiling:
-    #   budget 120,000 -> 2 sections omitted, median 2.8 s, max 7.2 s
-    #   budget 220,000 -> 0 omitted,          median 1.8 s, max 3.9 s
-    # Bigger is faster: a context full of elision markers makes the model work harder than
-    # the document does. It is also cheaper from turn 2, because a whole-document prefix is
-    # byte-identical every turn and the provider caches it (99.3% hit).
-    #
-    # Retrieval below this is therefore a SAFETY NET, not the normal path — still tested
-    # (L2, L16-L23), still the thing that keeps tier 5's length guarantee true.
-    # `claims_excerpt`'s own 30,000 default is a DIFFERENT budget on a different branch
-    # (up to 5 calls, not 2) and must not be moved with this one.
+    # The Q&A branch's context budget, deliberately ABOVE `max_html_chars`: rendering a
+    # document as context costs ~1.0-1.05x its HTML, so every document this app accepts
+    # is read whole and retrieval is a safety net rather than the normal path. Measured
+    # on a 196,395-character patent: at 120,000 two sections were dropped and the call
+    # took a median 2.8 s; at 220,000 nothing was dropped and it took a median 1.8 s.
+    # Bigger is faster here — elision markers make the model work harder than prose does.
     max_answer_context_chars: int = 220_000
+    # The EDITING branch's specification budget. Defaulted at `max_html_chars` rather
+    # than below it, for the same reason and with the same effect: the sections are a
+    # strict subset of the HTML they were parsed from, so every document this app accepts
+    # has its whole specification read, `build_spec` stays on tier 1, and the rendered
+    # text is a pure function of the document — which is what keeps the prompt prefix
+    # cacheable from turn to turn. Below this, retrieval is a safety net, not the path.
+    max_spec_context_chars: int = 200_000
     max_history_turns: int = 3
 
-    # --- AI, Task 2 ------------------------------------------------------
+    # The whole prompt, every block of it. Not enforced at runtime — the per-view
+    # ceilings above already bound each block, and clamping here would mean silently
+    # dropping context nothing had budgeted for. It is enforced at TEST time, by
+    # `prompts.worst_case_prompt_chars`, so raising any one cap past what the model can
+    # hold fails the suite instead of failing a user's request. ~340k chars is ~85k
+    # tokens on patent prose, comfortably inside this model's window.
+    max_prompt_chars: int = 340_000
+
     max_selection_chars: int = 8_000
-    # The uploaded file's NAME, not its text. It is interpolated into the prompt,
-    # so it is untrusted prompt input and is capped like every other string that
-    # gets there. 120 is longer than any real filename and short enough that it
-    # cannot carry instructions.
+    # The uploaded file's NAME, not its text. It reaches a prompt, so it is capped like
+    # every other untrusted string that does.
     max_context_name_chars: int = 120
     max_operations: int = 20
-    # PER LLM CALL. Passed as `timeout=` on every chat.completions.parse. 1.79x the
-    # slowest of the 14 calls measured live (max 6.7 s, median 1.5 s).
+    # Per LLM call. 1.79x the slowest of 14 calls measured live (max 6.7 s).
     ai_node_timeout_seconds: float = 12.0
-    # "Extra draft attempts". graph.max_draft_attempts() is derived as this + 1, AT CALL
-    # TIME, so the two can never drift and so this value is a real runtime lever. Do not
-    # add a third name for this number, and do not cache it in a module constant.
+    # Extra draft attempts. `graph.max_draft_attempts()` derives from this at call time,
+    # so the two cannot drift.
     judge_max_retries: int = 1
-    # Wall-clock budget for the whole graph, checked at the TOP of every node. It is a
-    # HUNG-SOCKET BACKSTOP with no reachable path in the legitimate configuration: five
-    # node calls at 12 s each is 60 s, which is already under this.
+    # Wall-clock budget for the whole graph, checked at the top of every node. A backstop
+    # for a hung socket: five node calls at 12 s is 60 s, already under this.
     ai_graph_deadline_seconds: float = 65.0
-    # asyncio.wait_for around the whole run. Strictly above the graph deadline. Note
-    # that it releases the REQUEST, not the worker thread.
+    # asyncio.wait_for around the whole run. Strictly above the graph deadline.
     ai_request_timeout_seconds: float = 75.0
     proposal_ttl_seconds: int = 900
-    # None => the kwarg is omitted entirely, and None is the SHIPPED value.
-    #
-    # 4Z measured `reasoning_effort="low"` accepted, and separately measured
-    # `temperature` 0.0/1.0/2.0 accepted. Both measurements are correct. The
-    # COMBINATION is not: gpt-5.2-2025-12-11 rejects `reasoning_effort` together with
-    # any `temperature` other than the default 1, with
-    #   400 "Unsupported value: 'temperature' does not support 0.0 with this model."
-    # Measured 2026-08-14:
-    #   effort + no temperature -> OK      effort + temperature=0.0 -> 400
-    #   effort + temperature=1.0 -> OK     no effort + temperature=0.0 -> OK
-    # llm.py sends temperature=0 on understand/plan_ops/judge, so with effort="low"
-    # three of the five nodes 400 on every call and the feature does not work at all.
-    #
-    # `reasoning_effort` is the one that goes, because 4Z also measured
-    # `reasoning_tokens == 0` on all 14 calls — it buys nothing measurable on this
-    # model — whereas temperature=0 is what makes the same instruction resolve the
-    # same way twice, which is the whole of §21.2's deterministic/generative split.
-    # Setting this to a value again will 400 unless §21.2's temperatures go too.
-    openai_reasoning_effort: str | None = None
 
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_comma_separated_origins(cls, value: object) -> object:
-        """Comma-separated is the documented form; a real list (the default, or a
-        test passing one in) falls through untouched."""
+        """Comma-separated is the documented form; a real list falls through."""
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
 
     @property
     def ai_enabled(self) -> bool:
-        """False when the key is absent or still the `.env.example` placeholder.
-
-        A reviewer who runs `cp .env.example .env` and forgets to paste a real key
-        must get a clean "AI is not configured" 503, not an authentication 500.
-        """
-        # .get_secret_value() is the ONLY place the raw key is read on this path.
-        # Reading self.openai_api_key directly would compare "**********" against
-        # the placeholder prefix and report every key as configured.
+        """False when the key is absent or still the `.env.example` placeholder, so a
+        reviewer who forgets to paste a real key gets a clean 503 rather than a 500."""
+        # .get_secret_value() is required: reading the field directly compares
+        # "**********" against the placeholder prefix.
         key = (self.openai_api_key.get_secret_value() if self.openai_api_key else "").strip()
         return bool(key) and not key.startswith("sk-XXXX")
 
 
 @lru_cache
 def get_settings() -> Settings:
-    """Cached accessor. Deliberately not a module-level singleton: tests need to
-    vary the configuration, and an import-time instance cannot be varied."""
+    """Cached accessor. Not a module-level singleton, because tests need to vary the
+    configuration and an import-time instance cannot be varied."""
     return Settings()

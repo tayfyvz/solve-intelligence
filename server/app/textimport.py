@@ -1,19 +1,14 @@
 """Plain text in, editor HTML out. One pure function, for importing a patent someone
 already wrote.
 
-It lives on the server and not in the client for one reason: the shape of a claim is
-defined by `ai/document.py`'s parser, and a second definition of it in TypeScript would
-drift from the first. The importer therefore ends by running the parser and the renderer
-over its own output — `render(parse(html))` — so what it returns is by construction in
-the canonical form the rest of the app stores, and `parse -> render -> parse` on it is
-byte-identical. That is asserted, not assumed (`_canonicalise`).
+It lives on the server because the shape of a claim is defined by `ai/document.py`'s
+parser, and a second definition in TypeScript would drift from the first. The importer
+ends by running that parser and renderer over its own output, so what it returns is by
+construction in the canonical form the rest of the app stores.
 
 Everything it could not be sure about comes back as a `note`. This file never guesses in
-silence: a claim set with duplicate numbers, a file with no claims at all and a file that
-is not a patent are all legal inputs here, and all three say what happened.
-
-Imports `ai/document.py` for the canonical form and `sanitize.py` for the allowlist every
-write already passes. No database, no HTTP, no `openai`.
+silence: a claim set with duplicate numbers, a file with no claims and a file that is not
+a patent at all are all legal inputs here, and all three say what happened.
 """
 
 from __future__ import annotations
@@ -28,10 +23,9 @@ from app.sanitize import sanitize_html
 MAX_TITLE_CHARS = 200  # matches models.MAX_TITLE_LENGTH; a longer first line is body text
 
 # A heading is short, has no sentence-ending punctuation, and is not a claim. The two
-# arms are deliberately different in kind: the first is a closed list of the sections a
-# patent actually has, and the second is the shape rule for anything else. A closed list
-# alone would miss "TECHNICAL FIELD OF THE DISCLOSURE"; the shape rule alone would
-# promote every short line, including the last line of a hard-wrapped paragraph.
+# arms are deliberately different in kind: a closed list of the sections a patent
+# actually has, plus a shape rule for anything else. The list alone would miss "TECHNICAL
+# FIELD OF THE DISCLOSURE"; the shape rule alone would promote every short line.
 KNOWN_HEADINGS = frozenset(
     {
         "abstract",
@@ -65,9 +59,9 @@ _CLAIMS_HEADING_RE = re.compile(r"^\s*(claims?|what is claimed is)\b", re.I)
 class ImportResult:
     """What the importer made of the file, and what it was unsure about.
 
-    `notes` is not decoration. An import that silently reinterprets someone's claim set
-    is worse than one that refuses, so every judgement call this module makes appears
-    here in a sentence the user reads before they commit to the result.
+    `notes` is not decoration: an import that silently reinterprets someone's claim set
+    is worse than one that refuses, so every judgement call appears here in a sentence
+    the user reads before committing to the result.
     """
 
     title: str
@@ -139,9 +133,8 @@ def _paragraphs(text: str) -> list[str]:
 def _title_of(paragraphs: list[str]) -> tuple[str, list[str]]:
     """Take the first paragraph as the title when it plausibly is one.
 
-    `<title>` is destroyed on the first save because `getHTML()` returns body content
-    only, so a title that stays in the content column is a title that vanishes. It goes
-    to `Document.title` or it does not exist.
+    `getHTML()` returns body content only, so a title left in the content column is
+    destroyed on the first save. It goes to `Document.title` or it does not exist.
     """
     if not paragraphs:
         return "", paragraphs
@@ -162,10 +155,9 @@ def _claim_numbers(paragraphs: list[str]) -> list[int]:
 def _numbering_notes(numbers: list[int]) -> list[str]:
     """Say what is odd about the numbering; never repair it.
 
-    Renumbering on import would rewrite a legal document the user has not asked us to
-    touch, and the cross-references would then point at the old numbers. The AI's
-    `renumber once, then remap` pipeline is the only thing allowed to change a claim
-    number, and it runs when the user asks for an edit.
+    Renumbering on import would rewrite a legal document nobody asked us to touch, and
+    the cross-references would then point at the old numbers. The applier's "renumber
+    once, then remap" is the only thing allowed to change a claim number.
     """
     notes: list[str] = []
     duplicates = sorted({n for n in numbers if numbers.count(n) > 1})
@@ -186,15 +178,10 @@ def _numbering_notes(numbers: list[int]) -> list[str]:
 
 
 def _clean_and_canonicalise(html: str) -> str:
-    """The round-trip contract, computed rather than hoped for.
-
-    Sanitise FIRST, canonicalise second. The other order stores bytes that the save
-    path's own `sanitize_html` would then change, so what the user previewed and what
-    the database holds would differ. `render(parse(x))` is the canonical form, so the
-    stored bytes are already what the parser reads back and `parse -> render -> parse` on
-    an imported document is byte-identical, exactly as it is for a seed. IM10 asserts
-    both properties on every awkward input this module has a rule for.
-    """
+    """Sanitise FIRST, canonicalise second. The other order stores bytes the save path's
+    own sanitiser would then change, so what the user previewed and what the database
+    holds would differ. `render(parse(x))` is the canonical form, so the stored bytes are
+    already what the parser reads back."""
     return render(parse(sanitize_html(html)))
 
 
@@ -202,8 +189,8 @@ def import_text(raw: str, *, fallback_title: str = "Imported patent") -> ImportR
     """Convert a plain-text patent into the HTML shape the rest of the app stores.
 
     Never raises on content: an empty file, a shopping list and a 1 MB claim set are all
-    handled, and what could not be recognised is reported in `notes`. The caller decides
-    whether an empty result is worth a 422 — that is an HTTP question, not this one.
+    handled, and what could not be recognised is reported in `notes`. Whether an empty
+    result deserves a 422 is an HTTP question, so the caller decides it.
     """
     paragraphs = _paragraphs(normalise(raw))
     title, body = _title_of(paragraphs)

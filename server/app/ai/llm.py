@@ -1,14 +1,12 @@
-"""The ONLY module in this repository that CALLS `openai`.
+"""The only module in this repository that calls `openai`.
 
-LangSmith warning: `langsmith` is in the dependency tree as a transitive dependency of
-`langgraph`. Setting LANGSMITH_TRACING or LANGCHAIN_TRACING_V2 in any environment sends
-every prompt — i.e. the customer's unpublished patent text — to a third party. No code
-path here enables it; see server/.env.example.
+Logging rule, and it is not optional: log the node, the model, token counts and the
+finish reason. Never log the document, the instruction, the uploaded file, the prompt,
+the raw response or the key — lengths and counts only.
 
-Logging rules, and they are not optional. Log the node name, model, token counts,
-reasoning tokens, ceiling and finish reason. **Never log verbatim** the document HTML,
-the instruction, the uploaded prior-art text, the selection, the full prompt or the raw
-response — log lengths and hashes instead. Never log the key in any form.
+`langsmith` arrives transitively with `langgraph`. Setting LANGSMITH_TRACING or
+LANGCHAIN_TRACING_V2 would send every prompt — a customer's unpublished patent — to a
+third party. No code path here enables it; see `.env.example`.
 """
 
 from __future__ import annotations
@@ -32,10 +30,9 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# The three nodes whose output is a DECISION run at temperature=0, so the same instruction
-# resolves the same way twice; the two whose output is PROSE keep the API default, so a
-# draft rejected by the judge can actually come back different. 0.0, 1.0 and 2.0 were all
-# measured as accepted on this model.
+# The three nodes whose output is a DECISION run at temperature 0, so the same
+# instruction resolves the same way twice. The two whose output is PROSE keep the API
+# default, so a draft the judge rejected can actually come back different.
 UNDERSTAND_TOKENS, UNDERSTAND_TEMPERATURE = 1200, 0.0
 PLAN_TOKENS, PLAN_TEMPERATURE = 2500, 0.0
 DRAFT_TOKENS, DRAFT_TEMPERATURE = 3000, None
@@ -44,23 +41,16 @@ ANSWER_TOKENS, ANSWER_TEMPERATURE = 2000, None
 
 _client: OpenAI | None = None
 
-# LlmUnavailable is RAISED here and DEFINED in schemas.py, beside PlanError. It moved
-# there for one mechanical reason: `nodes.node_guard` has to catch it, and `nodes.py` must
-# not import `openai` (invariant 1, test T5). `from app.ai.llm import LlmUnavailable`
-# still resolves, which is what every existing caller and test writes.
-
 
 def _get_client() -> OpenAI:
-    """Lazy, cached.
+    """Lazy and cached.
 
-    `OpenAI(api_key=None)` raises `OpenAIError` when OPENAI_API_KEY is also unset, so a
-    module-level client makes the whole app fail to start with no key — taking down the
-    503 path and the entire no-key reviewer experience with it. Construct on first use.
+    `OpenAI(api_key=None)` raises when OPENAI_API_KEY is unset, so a module-level client
+    would stop the app starting with no key — taking down the 503 path that exists to
+    explain the problem.
 
-    max_retries=0, not the SDK default of 2 and not 1: the graph makes up to FIVE calls,
-    so even one SDK retry doubles the worst case to 150 s and breaks the timeout chain.
-    Retry is the judge loop's job — the retry the user actually benefits from.
-    The accepted cost is that one transient 429 fails the request.
+    max_retries=0: the graph makes up to five calls, so even one SDK retry doubles the
+    worst case and breaks the timeout chain. Retry is the judge loop's job.
     """
     global _client
     if _client is None:
@@ -87,10 +77,6 @@ def _parse[T: BaseModel](
     logging exist exactly once."""
     settings = get_settings()
     extra: dict[str, object] = {}
-    # None => omit the kwarg entirely. An unsupported kwarg is a 400, and a 400 on every
-    # call is not a configuration mistake to make in front of a reviewer.
-    if settings.openai_reasoning_effort:
-        extra["reasoning_effort"] = settings.openai_reasoning_effort
     if temperature is not None:
         extra["temperature"] = temperature
 
@@ -98,27 +84,21 @@ def _parse[T: BaseModel](
         model=settings.openai_model,
         messages=messages,
         response_format=response_format,
-        timeout=settings.ai_node_timeout_seconds,  # PER CALL, not per request
-        max_completion_tokens=max_output_tokens,  # reasoning_tokens measured as 0,
-        **extra,  # so this bounds the VISIBLE answer
+        timeout=settings.ai_node_timeout_seconds,  # per call, not per request
+        max_completion_tokens=max_output_tokens,
+        **extra,
     )
     choice = completion.choices[0]
 
     # `usage` is Optional on the SDK's ParsedChatCompletion. Reading it unguarded turns a
-    # response we could still have handled — a refusal, a truncation — into an
-    # AttributeError, i.e. an unreadable 502 instead of a readable message. Log what is
-    # there; never let logging decide the control flow.
+    # response we could still have handled into an AttributeError.
     usage = completion.usage
-    reasoning = None
-    if usage is not None and usage.completion_tokens_details is not None:
-        reasoning = usage.completion_tokens_details.reasoning_tokens
     logger.info(
-        "ai.node=%s model=%s in_tokens=%s out_tokens=%s reasoning_tokens=%s ceiling=%d finish=%s",
+        "ai.node=%s model=%s in_tokens=%s out_tokens=%s ceiling=%d finish=%s",
         node,
         settings.openai_model,
         getattr(usage, "prompt_tokens", None),
         getattr(usage, "completion_tokens", None),
-        reasoning,
         max_output_tokens,
         choice.finish_reason,
     )
@@ -127,15 +107,7 @@ def _parse[T: BaseModel](
         logger.warning("ai.node=%s refused len=%d", node, len(choice.message.refusal))
         raise LlmUnavailable(choice.message.refusal)
     if choice.finish_reason == "length":
-        # 4Z measured 74-129 completion tokens against ceilings of 1200-3000, so this is
-        # unreachable on any ordinary input. It stays for the pathological one. The
-        # ceiling is logged so the fix is obvious from one line.
-        logger.warning(
-            "ai.node=%s truncated at %d tokens (reasoning_tokens=%s)",
-            node,
-            max_output_tokens,
-            reasoning,
-        )
+        logger.warning("ai.node=%s truncated at %d tokens", node, max_output_tokens)
         raise LlmUnavailable("The AI's response was cut off. Try a shorter instruction.")
     if choice.message.parsed is None:
         logger.warning("ai.node=%s parsed is None (finish=%s)", node, choice.finish_reason)
@@ -143,9 +115,8 @@ def _parse[T: BaseModel](
     return choice.message.parsed
 
 
-# ---------------------------------------------------------------------- the wrappers
-# Each is thin: build messages, call _parse, return the model. No branching and no
-# retries of their own — the graph owns the judge retry and there is no transport retry.
+# Each wrapper is thin: build messages, call _parse, return the model. No branching and
+# no retries of their own — the graph owns the judge retry.
 
 
 def understand_llm(
@@ -159,12 +130,9 @@ def understand_llm(
     prior_art_present: bool,
     prior_art_name: str | None,
 ) -> Understanding:
-    """Takes `prior_art_present: bool` and `prior_art_name`, never the file's text.
-
-    That signature IS the enforcement of the anti-injection property described in
-    prompts.build_understand_messages. L8 asserts there is no parameter that could carry
-    the file.
-    """
+    """Takes `prior_art_present` and `prior_art_name`, never the file's text. That
+    signature is what enforces the anti-injection property: the node that chooses the
+    branch has never read the uploaded file."""
     return _parse(
         messages=prompts.build_understand_messages(
             instruction,
@@ -187,13 +155,14 @@ def plan_llm(
     instruction: str,
     outline: str,
     claims: str,
+    spec: str,
     prior_art: str,
     history: list[Turn],
     selection: prompts.Selection | None = None,
 ) -> EditPlan:
     return _parse(
         messages=prompts.build_plan_messages(
-            instruction, outline, claims, prior_art, history, selection
+            instruction, outline, claims, spec, prior_art, history, selection
         ),
         response_format=EditPlan,
         node="plan",
@@ -210,7 +179,7 @@ def draft_llm(
     selection: prompts.Selection | None = None,
 ) -> EditPlan:
     """Returns an EditPlan rather than free prose, so the generative path lands in the
-    same apply engine as the deterministic one. There is one apply pipeline."""
+    same apply engine as the deterministic one."""
     return _parse(
         messages=prompts.build_draft_messages(instruction, retrieved, history, critique, selection),
         response_format=EditPlan,

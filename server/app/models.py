@@ -5,13 +5,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
 
-# Names are compared case-insensitively after trimming, so the constraints that
-# back that promise must be too. Both are expression indexes on `lower(name)`
-# rather than plain UniqueConstraints: a plain constraint would happily accept
-# "Widget" alongside "widget", which is precisely the collision users mean.
-# They are the backstop, not the fix — the routers pre-check and return a
-# readable 409; these turn a lost race into an IntegrityError instead of a
-# duplicate.
+# Names are compared case-insensitively after trimming, so the unique indexes at the foot
+# of this file are expression indexes on `lower(name)` rather than plain constraints: a
+# plain one accepts "Widget" alongside "widget", which is precisely the collision users
+# mean. They are the backstop, not the fix — the routers pre-check and return a readable
+# 409; these turn a lost race into an IntegrityError instead of a duplicate.
 MAX_TITLE_LENGTH = 200
 MAX_VERSION_NAME_LENGTH = 100
 
@@ -57,12 +55,10 @@ class DocumentVersion(Base):
     # is a plain label: nothing derives version identity from it.
     name: Mapped[str] = mapped_column(String(MAX_VERSION_NAME_LENGTH), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    # Which actor created this version: "user" (a plain save, import, or "Save as new
-    # version" click) or "ai" (the confirmed result of an AI-proposed edit). Set once at
-    # creation and never changed by later edits to the same row — it answers "who made
-    # this version exist", not "who last touched its content". The client uses it to
-    # decide whether further AI edits on this version may apply in place (no new
-    # version) or must go through the propose/confirm flow first.
+    # Who created this version: "user" (a plain save or import) or "ai" (the confirmed
+    # result of an AI-proposed edit). Set once at creation and never changed, so it
+    # answers "who made this version exist", not "who last touched it". The client reads
+    # it to decide whether further AI edits here may apply in place.
     source: Mapped[str] = mapped_column(String(4), nullable=False, default="user")
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

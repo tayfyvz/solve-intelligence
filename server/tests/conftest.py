@@ -11,12 +11,28 @@ from app.main import create_app
 
 
 @pytest.fixture
+def client() -> Iterator[TestClient]:
+    """A client backed by an in-memory database.
+
+    The session factory is injected into the app rather than overridden per request: the
+    lifespan (which seeds) runs outside the request cycle, so `dependency_overrides`
+    alone would let the tests write to server/data/app.db.
+    """
+    engine = create_db_engine("sqlite://")  # in-memory, StaticPool, same pragmas
+    Base.metadata.create_all(engine)
+    app = create_app(sessionmaker(bind=engine, autoflush=False))
+    with TestClient(app) as test_client:  # runs the lifespan, which seeds
+        yield test_client
+    engine.dispose()
+
+
+@pytest.fixture
 def ai_settings(monkeypatch: pytest.MonkeyPatch):
     """Vary AI settings for one test, then put the cache back.
 
-    `get_settings` is `lru_cache`d, so setting an environment variable does nothing until
+    `get_settings` is lru_cached, so setting an environment variable does nothing until
     the cache is cleared — and leaving a varied value cached would leak into every test
-    that ran afterwards. Both clears matter; the teardown one more than the setup one.
+    that ran afterwards. The teardown clear matters more than the setup one.
     """
     get_settings.cache_clear()
 
@@ -34,11 +50,9 @@ def ai_settings(monkeypatch: pytest.MonkeyPatch):
 def fake_runner(client: TestClient):
     """Install a canned `GraphResult` — or an exception to raise — as the graph.
 
-    Substitutes through the REAL HTTP stack via `dependency_overrides`, so the status
-    codes in the AI route's error table are genuinely exercised, and it never touches
-    an import path.
-    `calls` records every `GraphInput` the route built, which is how the clamp, the
-    history truncation and the filename are asserted from the outside.
+    Substituted through `dependency_overrides`, so the real HTTP stack is exercised while
+    nothing reaches OpenAI. `calls` records every `GraphInput` the route built, which is
+    how the clamp, the history truncation and the filename are asserted from outside.
     """
     calls: list[GraphInput] = []
 
@@ -56,19 +70,3 @@ def fake_runner(client: TestClient):
     _install.calls = calls  # type: ignore[attr-defined]
     yield _install
     client.app.dependency_overrides.clear()
-
-
-@pytest.fixture
-def client() -> Iterator[TestClient]:
-    """A client backed by an in-memory database.
-
-    The session factory is injected into the app rather than overridden per
-    request: the lifespan (which seeds) runs outside the request cycle, so
-    dependency_overrides alone would let the tests write to server/data/app.db.
-    """
-    engine = create_db_engine("sqlite://")  # in-memory, StaticPool, same pragmas
-    Base.metadata.create_all(engine)
-    app = create_app(sessionmaker(bind=engine, autoflush=False))
-    with TestClient(app) as test_client:  # runs the lifespan → seeds
-        yield test_client
-    engine.dispose()

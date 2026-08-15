@@ -37,10 +37,9 @@ BODY_TOO_LARGE = "That request body is too large."
 def _exceeds_json_depth(body: bytes, limit: int) -> bool:
     """True if `body` nests brackets more than `limit` deep, ignoring strings.
 
-    Scanned rather than parsed, because parsing is the thing that blows the stack.
-    The cheap `count` prefilter runs first: total open brackets is an upper bound
-    on depth, and every real body here is far under the limit, so the byte loop —
-    which is slow on a megabyte of patent HTML — almost never runs.
+    Scanned rather than parsed, because parsing is what blows the stack. The cheap
+    `count` prefilter runs first: total open brackets is an upper bound on depth, so the
+    byte loop — slow on a megabyte of patent HTML — almost never runs.
     """
     if body.count(b"{") + body.count(b"[") <= limit:
         return False
@@ -84,13 +83,11 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
     application = FastAPI(title="Patent Editor API", lifespan=lifespan)
     application.state.session_factory = session_factory or SessionLocal
 
-    # Registered BEFORE CORSMiddleware so that CORS ends up wrapping it: Starlette
-    # applies the most recently added middleware outermost. This is deliberate.
-    # FastAPI's built-in 500 handling sits above *all* user middleware, so an
-    # unhandled exception produces a response with no Access-Control-Allow-Origin
-    # header; the browser then reports a CORS failure and the UI says "cannot
-    # reach the server" while the server is fine. Catching it here keeps the
-    # response inside CORS, so the client gets a sentence it can render.
+    # Registered BEFORE CORSMiddleware so CORS ends up wrapping it — Starlette applies
+    # the most recently added middleware outermost. FastAPI's built-in 500 handling sits
+    # above all user middleware, so an unhandled exception produces a response with no
+    # Access-Control-Allow-Origin header: the browser reports a CORS failure and the UI
+    # says "cannot reach the server" while the server is fine.
     @application.middleware("http")
     async def handle_unexpected_errors(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
@@ -99,9 +96,9 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
             return await call_next(request)
         except Exception as exc:
             # The TYPE and the path, never str(exc): a ValidationError's message quotes
-            # the input that failed, and on this server that input is a customer's
-            # unpublished patent text. logger.exception would render the traceback, whose
-            # final line is that same message.
+            # the input that failed, and here that input is a customer's unpublished
+            # patent. `logger.exception` would render the traceback, whose last line is
+            # that same message.
             logger.error(
                 "http.unhandled type=%s method=%s path=%s",
                 type(exc).__name__,
@@ -163,11 +160,10 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
 
     @application.exception_handler(RequestValidationError)
     async def validation_error_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
-        """FastAPI's default echoes the rejected value back under `input`. On this
-        server that value is a customer's patent text or title, so the response
-        would put over the wire exactly what the 500 handler above is careful to
-        keep out of the logs. The caller already knows what it sent; it needs the
-        location and the reason."""
+        """FastAPI's default echoes the rejected value back under `input`. Here that
+        value is a customer's patent text, so the response would put over the wire
+        exactly what the handler above keeps out of the logs. The caller already knows
+        what it sent; it needs the location and the reason."""
         errors = [
             {key: value for key, value in error.items() if key != "input"} for error in exc.errors()
         ]
@@ -186,11 +182,10 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    # Derived from the routes rather than typed out: the hand-written list said
-    # GET/POST/PUT/DELETE, which allowed a verb no route serves and omitted the
-    # PATCH both rename features use — so every rename failed preflight and the UI
-    # reported "cannot reach the server". A derived list cannot drift again.
-    # OPTIONS is the preflight itself; HEAD is served by the middleware above.
+    # Derived from the routes rather than typed out: a hand-written list drifted in both
+    # directions at once — it allowed a verb no route served and omitted the PATCH both
+    # rename features use, so every rename failed preflight. OPTIONS is the preflight
+    # itself; HEAD is served by the middleware above.
     served_methods = sorted(
         {method for route in application.routes for method in getattr(route, "methods", ())}
         | {"OPTIONS", "HEAD"}
@@ -199,10 +194,8 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         # There is no auth, no cookie and no Authorization header anywhere in the
-        # client, so credentialed CORS buys nothing and only widens the surface — it
-        # is the flag that tells a browser to attach ambient credentials to a
-        # cross-origin request. Flip it back to True in the SAME commit that
-        # introduces authentication, never before.
+        # client, so credentialed CORS buys nothing and only widens the surface. Flip it
+        # back in the same commit that introduces authentication, never before.
         allow_credentials=False,
         allow_methods=served_methods,
         # The one header the client actually issues.

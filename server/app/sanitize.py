@@ -56,20 +56,16 @@ def sanitize_html(html: str) -> str:
 def sanitize_text(value: str) -> str:
     """Reduce a title or a version name to plain text.
 
-    Defence in depth, not a live exploit: React escapes everything it renders and
-    the client has no `dangerouslySetInnerHTML`. But `content` is the only field
-    that passes a sanitiser today, so a name is the one string on this server that
-    reaches a browser exactly as it was typed — and these names are also
-    interpolated into 409 messages. Cleaning them here means no future consumer
-    has to remember to.
+    Defence in depth, not a live exploit: React escapes what it renders. But `content` is
+    the only field that passes a sanitiser otherwise, so a name is the one string here
+    that reaches a browser exactly as typed — and names are also quoted back inside 409
+    messages.
 
-    Control characters go because a name is a single line of text: a `\\r` in a
-    title is invisible in the UI and corrupts anything that logs or exports it.
-    Markup goes through the same nh3 pass as `content`, with an empty tag
-    allowlist so nothing survives. nh3 then escapes what is left, which would
-    store "R&D" as "R&amp;D", so the escaping is undone — the known cost is that
-    a user who literally types "&lt;" gets "<" back, which is a better trade than
-    mangling every ampersand.
+    Control characters go because a name is one line of text: a `\\r` in a title is
+    invisible in the UI and corrupts anything that logs or exports it. Markup goes
+    through the same nh3 pass as `content` with an empty tag allowlist. nh3 then escapes
+    what is left, which would store "R&D" as "R&amp;D", so the escaping is undone — at
+    the known cost that a user who literally types "&lt;" gets "<" back.
     """
     unwrapped = "".join(
         " " if character in "\t\n\r" else character

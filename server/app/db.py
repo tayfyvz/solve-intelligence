@@ -23,11 +23,9 @@ def _is_memory_url(url: str) -> bool:
 
 
 def _ensure_sqlite_dir(url: str) -> None:
-    """`sqlite:///./data/app.db` fails to connect if `data/` does not exist.
-
-    Parsed with make_url rather than sliced out of the string: the
-    three-vs-four-slash relative/absolute distinction is easy to get wrong.
-    """
+    """`sqlite:///./data/app.db` fails to connect if `data/` does not exist. Parsed with
+    make_url rather than sliced: the three-vs-four-slash relative/absolute distinction is
+    easy to get wrong."""
     parsed = make_url(url)
     if not parsed.database:
         return
@@ -43,12 +41,10 @@ def create_db_engine(url: str) -> Engine:
     than duplicating it.
     """
     kwargs: dict[str, object] = {}
-    # check_same_thread is a sqlite3-ONLY connect argument; psycopg raises TypeError on
-    # it at first connect. Guarded like the pragma listener below, so that "the models
-    # port to Postgres by changing a URL" is actually true rather than nearly true.
-    # Keyed on the URL, not on engine.dialect.name, because the answer is needed before
-    # create_engine is called. StaticPool is scoped inside the guard for the same reason:
-    # it is a memory-SQLite concern and nothing else's.
+    # check_same_thread is a sqlite3-only connect argument and psycopg raises TypeError
+    # on it, so "the models port to Postgres by changing a URL" needs this guard to be
+    # true. Keyed on the URL rather than engine.dialect.name because the answer is needed
+    # before create_engine is called.
     if make_url(url).get_backend_name() == "sqlite":
         kwargs["connect_args"] = {"check_same_thread": False}
         if _is_memory_url(url):

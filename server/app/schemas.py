@@ -18,12 +18,9 @@ from app.sanitize import sanitize_text
 
 
 def _plain_text(value: str) -> str:
-    """The names' equivalent of the sanitiser every write of `content` passes.
-
-    It runs here rather than in the routers so that a name is clean before
-    anything compares it, stores it or quotes it back in a 409 — there is exactly
-    one gate, and it is the type.
-    """
+    """The names' equivalent of the sanitiser every write of `content` passes. It runs
+    on the type rather than in the routers, so a name is clean before anything compares
+    it, stores it or quotes it back in a 409."""
     cleaned = sanitize_text(value)
     if not cleaned:
         # Only reachable when the whole value was markup or control characters:
@@ -90,9 +87,9 @@ class DocumentDetail(BaseModel):
 class DocumentPage(BaseModel):
     """`total` is the unfiltered count, so the client can render page counts.
 
-    Spelled out per collection rather than as a generic Page[T]: a pydantic
-    generic serialises into OpenAPI as `Page_DocumentSummary_`, which is not a
-    name anyone would hand-write on the client.
+    Spelled out per collection rather than as a generic `Page[T]`: a pydantic generic
+    serialises into OpenAPI as `Page_DocumentSummary_`, which is not a name anyone would
+    hand-write on the client.
     """
 
     items: list[DocumentSummary]
@@ -161,10 +158,9 @@ class VersionRename(BaseModel):
 
 # --------------------------------------------------------------------- the AI surface
 #
-# Everything below is Task 2's wire layer. The engine never imports it: `Op` comes the
-# other way, and the two structural Protocols (`understand.Turn`, `prompts.Selection`)
-# exist so `ChatTurn` and `AiSelection` can satisfy the graph without the graph
-# depending on HTTP.
+# The engine never imports any of this: `Op` comes the other way, and the two structural
+# Protocols (`understand.Turn`, `prompts.Selection`) exist so `ChatTurn` and `AiSelection`
+# can satisfy the graph without the graph depending on HTTP.
 
 
 class ChatTurn(BaseModel):
@@ -177,8 +173,8 @@ class ChatTurn(BaseModel):
 class AiSelection(BaseModel):
     """Read-only context. Deliberately carries no ProseMirror positions: nothing on the
     wire can address a range, so no operation can target one. The client derives all four
-    fields; the server treats every one as advisory prose and re-validates
-    `claim_numbers` against its own parse."""
+    fields and the server treats every one as advisory, re-validating `claim_numbers`
+    against its own parse."""
 
     text: str
     claim_numbers: list[int]
@@ -187,9 +183,9 @@ class AiSelection(BaseModel):
 
 
 class AiOperation(Op):
-    """The wire name for a planner operation. Empty subclass: the fields are `Op`'s, so
-    the two can never drift, but OpenAPI — and therefore `types.ts` — gets a name that
-    reads as part of the AI surface rather than `Op`, which nobody can read in a diff."""
+    """The wire name for a planner operation. An empty subclass, so the fields are `Op`'s
+    and the two cannot drift, but OpenAPI — and therefore `types.ts` — gets a name that
+    reads as part of the AI surface."""
 
 
 class AiVerifyReport(BaseModel):
@@ -208,19 +204,17 @@ class AiVerifyReport(BaseModel):
 class AiProposal(BaseModel):
     """Round-trips through the client between the two calls.
 
-    The server keeps no copy: there is no proposal store, no session, and therefore
-    nothing to expire on a restart. `created_at` + `proposal_ttl_seconds` is the only
-    expiry.
+    The server keeps no copy: no proposal store, no session, nothing to expire on a
+    restart. `created_at` plus `proposal_ttl_seconds` is the only expiry.
 
     NOT SIGNED. Forging one lets a user apply deterministic operations to their own
-    document — which they can already do by typing. There is no multi-tenancy and no auth
-    here, so an HMAC would be ceremony with nothing behind it. If auth is ever added,
+    document, which they can already do by typing. There is no auth and no multi-tenancy
+    here, so an HMAC would be ceremony with nothing behind it; if auth is ever added,
     this is the line that changes.
 
-    NO `preview_html`, and no HTML field of any kind. The preview the user reads is
-    `summary` plus the operations' `text`/`paragraphs`, rendered as text by the client.
-    That keeps invariant 3 exact and mechanical: the only HTML-shaped field anywhere in
-    the AI surface is the top-level `html`, and only an applied outcome has one.
+    No HTML field of any kind. The preview the user reads is `summary` plus the
+    operations' own text, rendered by the client — so the only HTML-shaped field anywhere
+    in the AI surface is the top-level `html`, and only an applied outcome has one.
     """
 
     proposal_id: str  # uuid4().hex — client-side dedupe and log correlation
@@ -231,9 +225,8 @@ class AiProposal(BaseModel):
     message: str  # the sentence shown above the Apply / Cancel buttons
     summary: list[str]  # one human-readable line per operation
     # True when the plan writes NEW PROSE rather than only rearranging existing text.
-    # Information for the card, not the prompt decision — the prompt decision is consent.
-    # The card renders a distinct line for it, because "the AI wrote this sentence" is
-    # what a patent attorney needs to know before clicking Proceed.
+    # Information for the card, never the prompt decision — that is consent. "The AI
+    # wrote this sentence" is what an attorney needs to know before clicking Proceed.
     authors_new_text: bool
     operations: list[AiOperation]
 
@@ -250,11 +243,9 @@ class AiChatRequest(BaseModel):
     context_name: str | None = None
     selection: AiSelection | None = None
     history: list[ChatTurn] = Field(default_factory=list)
-    # THE PROMPT DECISION, supplied by the client. True means the user has already
-    # approved AI editing of exactly this document AND this version.
-    # StrictBool: this one boolean is the whole consent invariant, and lax coercion
-    # accepts the string "yes" as True. A client that has to say it plainly cannot say it
-    # by accident.
+    # THE PROMPT DECISION, supplied by the client: True means the user has approved AI
+    # editing of exactly this document AND this version. StrictBool because this one
+    # boolean is the whole consent invariant, and lax coercion accepts the string "yes".
     consented: StrictBool = False
     # --- the clarification loop ------------------------------------------------
     pending_question: str | None = None  # the clarifying question we asked last turn
@@ -281,15 +272,13 @@ class AiChatResponse(BaseModel):
 
     @model_validator(mode="after")
     def _payload_matches_outcome(self) -> "AiChatResponse":
-        """Invariant 3, and the consent rule, expressed once as a property of the type
-        instead of as a property of every return statement someone might later add.
+        """The payload rules, expressed once as a property of the type instead of once
+        per return statement someone might later add.
 
         Nulling is asymmetric on purpose. Dropping a payload on a non-positive outcome
-        fails CLOSED — the document cannot change — so it is done silently. A positive
-        outcome with a MISSING payload fails OPEN (a "proposal" the user cannot act on,
-        or an "applied" that changes nothing while the UI says it did), so it raises:
-        that is a programming error and must be loud. It surfaces as a 500 with the
-        standard sentence, which is correct — the client did nothing wrong.
+        fails CLOSED — the document cannot change — so it is silent. A positive outcome
+        with a MISSING payload fails OPEN (a "proposal" the user cannot act on, or an
+        "applied" that changes nothing while the UI says it did), so it raises.
         """
         if self.status != "applied":
             self.html = None
@@ -348,11 +337,10 @@ class TextImportRequest(BaseModel):
 class TextImportResult(BaseModel):
     """The conversion, and everything the importer was unsure about.
 
-    `content` is exactly what a save will store: the conversion sanitises and
-    canonicalises before returning, so the preview is not an approximation of the result.
-    `notes` is the "never fail silently" half — a claim set with duplicate numbers, a file
-    with no claims and a file that is not a patent at all are all importable, and all
-    three say so here rather than quietly becoming something else.
+    `content` is exactly what a save will store, so the preview is not an approximation.
+    `notes` is the "never fail silently" half: a claim set with duplicate numbers, a file
+    with no claims and a file that is not a patent are all importable, and all three say
+    so here rather than quietly becoming something else.
     """
 
     title: str

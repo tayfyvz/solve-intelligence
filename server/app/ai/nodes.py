@@ -1,14 +1,12 @@
-"""What each step of the AI pipeline does.
+"""What each step of the AI pipeline does. One function per node.
 
-One function per node. Every node takes the graph state (always the LAST positional
-argument) and returns a PARTIAL dict; none mutates the state it was given and none
-mutates `state["doc"]`. The order the nodes run in, and the edges between them, live in
-`graph.py` — the one file that imports LangGraph.
+Every node takes the graph state as its last positional argument and returns a partial
+dict; none mutates the state it was given, and none mutates `state["doc"]`. The order
+the nodes run in lives in `graph.py`, the one file that imports LangGraph.
 
-This module imports neither the OpenAI SDK nor LangGraph, so T5's glob covers it and every
-node is testable with a fake bundle, no network and no key. That is also why
-`LlmUnavailable` is defined in `schemas.py` rather than in `llm.py`: `node_guard` has to
-catch it, and importing `llm.py` would pull `openai` in here.
+This module imports neither the OpenAI SDK nor LangGraph, so every node is testable with
+a fake bundle, no network and no key. That is also why `LlmUnavailable` is defined in
+`schemas.py`: `node_guard` has to catch it, and importing `llm.py` would pull in `openai`.
 """
 
 from __future__ import annotations
@@ -24,7 +22,15 @@ from typing import Protocol
 from app.ai import prompts
 from app.ai import verify as vf
 from app.ai.document import REF_RE, Claim, ParsedDocument, block_text
-from app.ai.outline import build_context, claims_excerpt, content_tokens, section_excerpt, tokens
+from app.ai.outline import (
+    ContextView,
+    build_context,
+    build_spec,
+    claims_excerpt,
+    content_tokens,
+    section_excerpt,
+    tokens,
+)
 from app.ai.prompts import Selection, render_critique
 from app.ai.schemas import (
     Answer,
@@ -58,26 +64,11 @@ NO_PLAN_MESSAGE = (
     'Try naming a claim number, for example "make claim 2 bold".'
 )
 
-__all__ = [
-    "CAPABILITY_STATEMENT",
-    "DEADLINE_MESSAGE",
-    "JUDGE_SKIPPED_NOTE",
-    "NO_PLAN_MESSAGE",
-    "LlmBundle",
-    "UnderstandFn",
-    "node_guard",
-    "render_critique",
-]
-
-
-# ------------------------------------------------------------------ the injection seam
-
 
 class UnderstandFn(Protocol):
-    """`understand` is the only member called with keyword arguments, and the only one
-    whose signature encodes a security property: it takes the file's NAME and never its
-    TEXT (§21.3, §22.12). `Callable[..., Understanding]` erases exactly the part that
-    matters, so it is spelled out."""
+    """`understand` is the only member whose signature encodes a security property: it
+    takes the file's NAME and never its TEXT. `Callable[..., Understanding]` would erase
+    exactly the part that matters, so it is spelled out."""
 
     def __call__(
         self,
@@ -95,37 +86,26 @@ class UnderstandFn(Protocol):
 
 @dataclass(frozen=True)
 class LlmBundle:
-    """Five callables carried into `build_graph` as one argument.
-
-    FastAPI's dependency system cannot reach inside a graph node, and threading five
-    functions through the state would put unserialisable values on a channel. One frozen
-    dataclass is the smallest thing that does the job.
-    """
+    """The five callables, carried into `build_graph` as one argument. FastAPI's
+    dependency system cannot reach inside a graph node, and threading five functions
+    through the state would put unserialisable values on a channel."""
 
     understand: UnderstandFn
-    # (instruction, outline, claims, prior_art, history, selection) — `claims` is the FULL
-    # text of the resolved claims, added after 4Z (§21.6). `selection` is shown in full so
-    # "remove the selected part" can become a literal replace_text.find.
-    plan: Callable[[str, str, str, str, list[Turn], Selection | None], EditPlan]
-    # (instruction, retrieved, history, critique, selection) — `selection` for the same
-    # verbatim-copy reason as `plan`, plus one this branch owns: "add this as a new
-    # section" makes the highlighted text the MATERIAL of the edit, not its target.
+    # (instruction, outline, claims, spec, prior_art, history, selection)
+    plan: Callable[[str, str, str, str, str, list[Turn], Selection | None], EditPlan]
+    # (instruction, retrieved, history, critique, selection)
     draft: Callable[[str, Retrieved, list[Turn], str | None, Selection | None], EditPlan]
     judge: Callable[[str, Retrieved, EditPlan], JudgeVerdict]
     answer: Callable[[str, Retrieved, list[Turn]], Answer]
 
 
-# --------------------------------------------------------------------- node logging
-
-
 def _node_log(name: str, state: dict, started: float, **fields: object) -> None:
-    """One INFO line per node, keyword-shaped so a later grep is one command.
+    """One INFO line per node.
 
-    THE RULE, enforced by what this function is only ever passed:
-    counts, lengths, kinds, enum values and truncated hashes. Never the document,
-    never the instruction, never the prompt, never the model's prose — including
-    the model's own `reason` and `restatement`, which quote the text they describe.
-    There is no debug flag that widens this; a flag that can be set will be set.
+    The rule, enforced by what this function is only ever passed: counts, lengths, kinds
+    and enum values. Never the document, the instruction, the prompt or the model's prose
+    — including its own `restatement`, which quotes the text it describes. There is no
+    debug flag that widens this.
     """
     logger.info(
         "ai.node=%s req=%s %s ms=%d",
@@ -136,19 +116,14 @@ def _node_log(name: str, state: dict, started: float, **fields: object) -> None:
     )
 
 
-# ----------------------------------------------------------------------- the guard
-
 NodeHook = Callable[[dict], dict]
 
 
 def node_guard(name: str, *, on_deadline: NodeHook | None = None, on_error: NodeHook | None = None):
-    """Wraps a node with the four things every node needs and none should repeat.
+    """Wraps a node with the three things every node needs and none should repeat.
 
-    The wrapped function is EITHER `(llm, state)` (LLM nodes, bound with
-    `functools.partial` at build time) OR `(state,)` (deterministic nodes). The state is
-    therefore always the LAST positional argument and the guard passes `*args` straight
-    through. Do not call a guarded node with keyword arguments; LangGraph does not, and
-    `partial` binds from the left.
+    The wrapped function is either `(llm, state)` or `(state,)`, so the state is always
+    the last positional argument and the guard passes `*args` straight through.
     """
 
     def decorate(fn):
@@ -156,14 +131,13 @@ def node_guard(name: str, *, on_deadline: NodeHook | None = None, on_error: Node
         def wrapper(*args) -> dict:
             state: dict = args[-1]
 
-            # 1. SHORT-CIRCUIT. A previous node already failed. Do not spend an LLM call
-            #    on a run that terminates at `verify` with status="error" regardless.
-            #    Returning {} merges nothing and leaves `error` in place for the
-            #    conditional edges and for `_verify`.
+            # 1. A previous node already failed. Do not spend an LLM call on a run that
+            #    terminates at `verify` with status="error" regardless. Returning {}
+            #    leaves `error` in place for the conditional edges.
             if state.get("error"):
                 return {}
 
-            # 2. DEADLINE, at the TOP of the node (§3.4 point 1).
+            # 2. The deadline, checked at the TOP of the node.
             settings = get_settings()
             if time.monotonic() - state["started_at"] > settings.ai_graph_deadline_seconds:
                 logger.warning("ai.node=%s req=%s deadline exceeded", name, state.get("req") or "-")
@@ -171,15 +145,12 @@ def node_guard(name: str, *, on_deadline: NodeHook | None = None, on_error: Node
                     return on_deadline(state)
                 return {"error": DEADLINE_MESSAGE, "status": "error"}
 
-            # 3. THE CALL.
             try:
                 return fn(*args)
             except LlmUnavailable as exc:
-                # 4. A readable failure, plus whatever bookkeeping the node owes even
-                #    when it failed (draft owes `attempts`).
-                # The exception TYPE only. Provider error bodies echo the prompt back,
-                # and `status` belongs to the openai exceptions, which do not stop here —
-                # they propagate to `_upstream_error`, which logs them with their code.
+                # A readable failure, plus whatever bookkeeping the node owes even when it
+                # failed (draft owes `attempts`). The exception TYPE only: provider error
+                # bodies echo the prompt back.
                 logger.warning(
                     "ai.llm_error req=%s node=%s type=%s",
                     state.get("req") or "-",
@@ -200,7 +171,6 @@ def _unresolved(question: str) -> Understanding:
     return Understanding(
         intent="answer",
         restatement=question,
-        reason="deterministic clarification",
         target_kind="none",
         claim_numbers=[],
         section_heading=None,
@@ -220,26 +190,15 @@ def _understand(llm: LlmBundle, state: dict) -> dict:
     started = time.monotonic()
     doc, instr = state["doc"], state["instruction"]
 
-    # 1. A file reference with no file is unambiguous. Zero LLM calls, ~1 ms (§17.8).
+    # 1. A file reference with no file is unambiguous. Zero LLM calls.
     question = missing_file_question(instr, state["prior_art"])
     if question is not None:
         u = _unresolved(question)
-        _node_log(
-            "understand",
-            state,
-            started,
-            routed_by="deterministic",
-            intent=u.intent,
-            resolved=u.resolved,
-            confidence=u.confidence,
-            claims=u.claim_numbers,
-            prior_art_role=u.prior_art_role,
-            gated=False,
-        )
+        _node_log("understand", state, started, routed_by="deterministic", resolved=False)
         return {"understanding": u, "intent": "answer", "routed_by": "deterministic"}
 
-    # 2. Three anchored patterns that can only produce a FULLY RESOLVED, parse-validated
-    #    Understanding — or None (§17.8). They refuse to fire while a question is pending.
+    # 2. Three anchored patterns that produce either a fully resolved, parse-validated
+    #    understanding or None. They refuse to fire while a question is pending.
     u = fast_understanding(instr, doc, pending_question=state.get("pending_question"))
     routed_by = "keyword"
     if u is None:
@@ -255,8 +214,8 @@ def _understand(llm: LlmBundle, state: dict) -> dict:
         )
         routed_by = "llm"
 
-    # 3. Everything Python knows that the model might have got wrong. Runs on EVERY path,
-    #    including the fast path, and only ever moves towards resolved=False (§17.8).
+    # 3. Everything Python knows that the model might have got wrong. Runs on every path,
+    #    including the fast path, and only ever moves towards resolved=False.
     before = u
     u = gate_understanding(u, doc, instr, clarify_count=state.get("clarify_count", 0))
     _node_log(
@@ -269,8 +228,7 @@ def _understand(llm: LlmBundle, state: dict) -> dict:
         confidence=u.confidence,
         claims=u.claim_numbers,
         prior_art_role=u.prior_art_role,
-        # Did the deterministic gate overrule the model? The single most useful bit
-        # on this line, and the reason the gate is not silent.
+        # Did the deterministic gate overrule the model? The most useful bit on this line.
         gated=(before.resolved != u.resolved or before.intent != u.intent),
     )
     calls = {"llm_calls": state.get("llm_calls", 0) + 1} if routed_by == "llm" else {}
@@ -278,15 +236,6 @@ def _understand(llm: LlmBundle, state: dict) -> dict:
 
 
 # --------------------------------------------------------------------------- retrieve
-
-# The word list and the two tokenisers live in `outline.py`, which needs them to rank
-# sections against the question and may not import this module (nodes imports outline).
-# They are imported above rather than duplicated, so there is exactly one of each.
-#
-# `content_tokens(q)`, never `tokens(q) - STOPWORDS`. The order is load-bearing: stemming
-# first and subtracting after deletes any content word whose STEM collides with a
-# stopword's — "shoulder" folds to "should" — so a question about the shoulder of a housing
-# was answered "none of the words in your question appear in this document".
 
 
 def is_dependent(claim: Claim) -> bool:
@@ -298,7 +247,7 @@ def is_dependent(claim: Claim) -> bool:
 
 def parent_of(doc: ParsedDocument, number: int) -> int | None:
     """The first claim reference inside claim `number`, or None. One hop only — the judge
-    needs the claim a new claim depends FROM, not the whole chain."""
+    needs the claim a new claim depends from, not the whole chain."""
     claim = next((c for c in doc.claims if c.number == number), None)
     if claim is None:
         return None
@@ -321,11 +270,9 @@ def top_k_by_overlap(doc: ParsedDocument, words: set[str], k: int) -> set[int]:
 
 
 def select_paragraphs(text: str, words: set[str], *, cap: int) -> str:
-    """The highest-scoring paragraphs of the uploaded file, IN ORIGINAL ORDER, up to `cap`.
-
-    Order preservation is the whole point: prior art read out of order reads as gibberish
-    to the drafter. Returns unfenced text — `prompts.py` fences, exactly once (§22.4).
-    """
+    """The highest-scoring paragraphs of the uploaded file, in ORIGINAL ORDER, up to
+    `cap`. Order preservation is the point: prior art read out of order reads as
+    gibberish to the drafter. Returns unfenced text; `prompts.py` fences it once."""
     if not text.strip():
         return ""
     paragraphs = [p for p in re.split(r"\n\s*\n", text) if p.strip()]
@@ -344,21 +291,34 @@ def select_paragraphs(text: str, words: set[str], *, cap: int) -> str:
     return "\n\n".join(paragraphs[i] for i in sorted(kept))
 
 
+def spec_view(state: dict) -> ContextView:
+    """The specification body for an EDITING request.
+
+    Shared by the two nodes that write, and they reach it by different routes:
+    `plan_ops` is branched to directly and never visits `retrieve`, so it calls this
+    itself. One function so the two paths cannot drift into showing the model two
+    different documents.
+    """
+    return build_spec(
+        state["doc"],
+        content_tokens(state["instruction"]),
+        max_chars=get_settings().max_spec_context_chars,
+    )
+
+
 def _retrieve(state: dict) -> dict:
     started = time.monotonic()
-    # NOT a module-level binding: tests vary the caps and an import-time Settings cannot
-    # be varied.
+    # Read here, not at import: tests vary the caps.
     settings = get_settings()
     doc, instr = state["doc"], state["instruction"]
     u = state["understanding"]
-    # 1. The claims `understand` RESOLVED — already validated against this parse by
-    #    gate_understanding, so "the last claim" and "claim three" are numbers by now.
+    # 1. The claims `understand` resolved — already validated against this parse by
+    #    `gate_understanding`, so "the last claim" is a number by now.
     picked = set(u.claim_numbers)
-    # 1b. Plus anything the sentence names literally (§17.8). Belt for the
-    #     medium-confidence case; never a substitute for the resolution.
+    # 1b. Plus anything the sentence names literally, as a belt for the medium-confidence
+    #     case. Never a substitute for the resolution.
     picked |= set(claim_refs(instr))
-    # 1c. Claims the user's SELECTION touches — a hint, re-validated here against our own
-    #     parse, never trusted as an instruction (§25.2).
+    # 1c. Claims the selection touches — a hint, re-validated against our own parse.
     selection = state.get("selection")
     if selection is not None:
         picked |= set(selection.claim_numbers)
@@ -372,43 +332,40 @@ def _retrieve(state: dict) -> dict:
     numbers = {c.number for c in doc.claims}
     picked = {n for n in picked if n is not None and n in numbers}
 
-    # 5. The file is retrieved when `understand` said it is part of the request — OR,
-    #    as a deterministic backstop, when a file IS attached and this instruction plainly
-    #    names it (`FILE_WORDS`, the same regex `missing_file_question` uses for the
-    #    opposite case: a name with no file). Live: a multi-turn "add this file as a new
-    #    Appendix section" request kept resolving intent and target correctly while the
-    #    model left `prior_art_role` at "none" on the turn that mattered, so `draft` saw an
-    #    empty prior-art block and refused, correctly, given what it was shown — asking the
-    #    user to re-paste content that was attached the whole time. `gate_understanding`
-    #    cannot fix this itself (it only ever narrows towards `resolved=False`, never
-    #    invents a fact the model didn't state); this is the retrieval-layer equivalent,
-    #    the one place that already makes best-effort, non-authoritative choices about what
-    #    to fetch. A false positive costs one wasted excerpt fetch, never a wrong edit.
+    # 5. The file is retrieved when `understand` said it is part of the request, or — as a
+    #    deterministic backstop — when a file IS attached and the instruction plainly names
+    #    it. Live, the model left `prior_art_role` at "none" on the turn that mattered, so
+    #    `draft` saw an empty prior-art block and asked the user to paste content that had
+    #    been attached the whole time. A false positive costs one wasted excerpt fetch.
     excerpt = ""
     if u.prior_art_role != "none" or (state["prior_art"].strip() and FILE_WORDS.search(instr)):
+        # `content_tokens`, not `tokens`: the question side of every ranking in this app
+        # has its stopwords removed first. This one call did not, so paragraphs were
+        # scored on how many times they said "the" and "of" — which ranks by length and
+        # common-word density rather than by relevance, and picked the wrong excerpt from
+        # a long file without ever failing.
         excerpt = select_paragraphs(
-            state["prior_art"], tokens(instr), cap=settings.max_context_chars
+            state["prior_art"], content_tokens(instr), cap=settings.max_context_chars
         )
 
-    # 6. THE TEXT ITSELF — full, never the outline's 240-char lines. On the GENERATIVE
-    #    branch the picked claims go in AT FULL LENGTH, because `draft` and `judge` are
-    #    the two nodes that must read the exact words they are rewriting or checking. 4Z
-    #    proved live what happens otherwise (§20.7 failure A, §21.6).
-    #    On the `answer` branch the question can be about anything, so `build_context`
-    #    decides what the model needs to read: the whole document when it fits, and
-    #    otherwise the claims plus the description paragraphs this question actually
-    #    scores against — with everything it could not fit NAMED, never dropped in
-    #    silence. The names come back out as a warning, in `_verify`.
-    # 6a. The generative branches (`generate`, via `draft`) resolve a request to ONE
-    #    non-claim section, not a paragraph rank. `understand` already did the resolving
-    #    (`target_kind == "section"`, `section_heading` set, verified against the outline
-    #    by `gate_understanding`); this fetches that section's full body the same way step
-    #    6 fetches the picked claims' full text, so "make the Appendix more professional"
-    #    reaches `draft` with the Appendix's actual prose instead of only its heading.
+    # 6. A generative request resolved to one non-claim section gets that section's full
+    #    body, the same way it gets a resolved claim's full text. Without it, "make the
+    #    Appendix more professional" reached `draft` with only the outline's heading list,
+    #    and the model — correctly — asked the user to paste the Appendix back in.
     section_text = ""
     if u.intent != "answer" and u.target_kind == "section":
         section_text = section_excerpt(doc, u.section_heading)
 
+    # 7. The text itself. On the generative branch the picked claims go in AT FULL LENGTH,
+    #    because `draft` and `judge` must read the exact words they are rewriting or
+    #    checking. On the answer branch the question can be about anything, so
+    #    `build_context` decides: the whole document when it fits, otherwise the claims
+    #    plus the paragraphs this question scores against — with everything it could not
+    #    fit NAMED. Those names come back out as a warning in `_verify`.
+    # 8. The specification body, for the generative branch only. The answer branch's
+    #    `claims_text` IS the whole document already, so adding it there would send the
+    #    description twice and halve the budget it was measured at.
+    spec_text, spec_omitted = "", []
     if u.intent == "answer":
         view = build_context(
             doc, content_tokens(instr), max_chars=settings.max_answer_context_chars
@@ -418,6 +375,8 @@ def _retrieve(state: dict) -> dict:
     else:
         claims_text, omitted = claims_excerpt(doc, sorted(picked)), []
         matched, headed = True, True
+        spec = spec_view(state)
+        spec_text, spec_omitted = spec.text, list(spec.omitted)
 
     _node_log(
         "retrieve",
@@ -426,22 +385,25 @@ def _retrieve(state: dict) -> dict:
         claims_retrieved=len(picked),
         claims_chars=len(claims_text),
         section_chars=len(section_text),
+        spec_chars=len(spec_text),
         excerpt_chars=len(excerpt),
-        # A COUNT, never the headings: a section title is the customer's own words.
-        sections_omitted=len(omitted),
+        # A count, never the headings: a section title is the customer's own words.
+        sections_omitted=len(omitted) + len(spec_omitted),
     )
     return {
         "retrieved": Retrieved(
             claim_numbers=sorted(picked),
             claims_text=claims_text,
             section_text=section_text,
+            spec_text=spec_text,
+            spec_omitted=spec_omitted,
             outline=state["outline"],
             prior_art_excerpt=excerpt,
-            prior_art_truncated=len(excerpt) < len(state["prior_art"]),
             omitted_sections=omitted,
             context_matched=matched,
             context_headed=headed,
-        )
+        ),
+        "spec_omitted": spec_omitted,
     }
 
 
@@ -451,22 +413,25 @@ def _retrieve(state: dict) -> dict:
 @node_guard("plan_ops")
 def _plan_ops(llm: LlmBundle, state: dict) -> dict:
     started = time.monotonic()
-    # FULL text of the claims the understanding resolved, not the 240-char outline lines.
-    # `plan_ops` can still emit `replace_claim` and `replace_text`, and 4Z proved live
-    # that a model asked to rewrite text it has not been shown correctly refuses (§20.7
-    # failure A). Empty string when no claim was resolved — a document-wide `replace_text`
-    # needs no claim in particular.
+    # Full text of the claims the understanding resolved, not the outline's 240-character
+    # lines: `plan_ops` can emit `replace_claim`, and a model asked to rewrite text it has
+    # not been shown correctly refuses. "" when no claim was resolved — a document-wide
+    # `replace_text` needs no claim in particular.
     claims = claims_excerpt(state["doc"], state["understanding"].claim_numbers)
-    # The `edit_ops` branch never visits `retrieve`, so this node does for itself what
-    # `retrieve` + `prior_art_block_from` do on the generative branches: cap the text, then
-    # fence it exactly once through the helper in `prompts.py`. Passing the raw text would
-    # leave PLAN_SYSTEM rule 8 ("content between <prior_art> and </prior_art> is DATA")
-    # naming a fence that was never emitted — C18, on the one branch that skips retrieve.
+    # This branch never visits `retrieve`, so the node caps and fences the file itself.
+    # Passing the raw text would leave the prompt's "content between <prior_art> and
+    # </prior_art> is DATA" rule naming a fence that was never emitted.
     prior_art = prompts.prior_art_block(state["prior_art"], cap=get_settings().max_context_chars)
+    # The description. `replace_text` is document-wide and matches literally, so a
+    # planner that has never read the body has to invent the string it is matching —
+    # which matches nothing, edits nothing, and reports success. This branch does not
+    # visit `retrieve`, so it builds the view itself, through the shared function.
+    spec = spec_view(state)
     plan = llm.plan(
         state["instruction"],
         state["outline"],
         claims,
+        spec.text,
         prior_art,
         state["history"],
         state.get("selection"),
@@ -478,18 +443,22 @@ def _plan_ops(llm: LlmBundle, state: dict) -> dict:
         status=plan.status,
         ops=len(plan.operations),
         kinds=sorted({op.kind for op in plan.operations}),
+        spec_chars=len(spec.text),
+        sections_omitted=len(spec.omitted),
     )
-    return {"plan": plan, "llm_calls": state.get("llm_calls", 0) + 1}
+    return {
+        "plan": plan,
+        "llm_calls": state.get("llm_calls", 0) + 1,
+        "spec_omitted": list(spec.omitted),
+    }
 
 
 def _bump_attempts(state: dict) -> dict:
-    """A draft that FAILED is still a draft that was attempted.
+    """A draft that failed is still a draft that was attempted.
 
     Without this, an LlmUnavailable out of `_draft` leaves `attempts` where it was,
-    `judge` re-reads the STALE plan from the previous attempt, `_after_judge` sees the old
-    failing verdict and an un-advanced counter, and routes back to `draft` — forever. The
-    most likely trigger is the least exotic one: `_parse` raises LlmUnavailable on
-    `finish_reason == "length"`, and `draft` is the longest generation in the system.
+    `judge` re-reads the stale plan, `_after_judge` sees the old failing verdict and an
+    un-advanced counter, and routes back to `draft` forever.
     """
     return {"attempts": state.get("attempts", 0) + 1}
 
@@ -497,12 +466,11 @@ def _bump_attempts(state: dict) -> dict:
 def _judge_deadline_pass(state: dict) -> dict:
     """Past the deadline the judge does not run, and we say so.
 
-    A synthetic PASS stops `_after_judge` retrying, which is what we want — but a pass
-    with no failures produces no warnings, and the user would receive UNREVIEWED generated
-    claim text with nothing to tell them so. `judge_skipped` is that signal; `_verify`
-    turns it into JUDGE_SKIPPED_NOTE. It is a separate channel rather than a direct write
-    to `warnings` because `warnings` is verify-only and has no reducer — a second writer
-    would be silently overwritten, not merged (§22.1).
+    A synthetic pass stops `_after_judge` retrying, which is what we want — but a pass
+    with no failures produces no warnings, and the user would receive unreviewed generated
+    claim text with nothing to tell them so. `judge_skipped` is that signal. It is a
+    separate channel because `warnings` is verify-only and has no reducer, so a second
+    writer would be overwritten rather than merged.
     """
     return {
         "verdict": JudgeVerdict(verdict="pass", failures=[], suggestion=""),
@@ -529,7 +497,7 @@ def _draft(llm: LlmBundle, state: dict) -> dict:
         status=plan.status,
         ops=len(plan.operations),
         kinds=sorted({op.kind for op in plan.operations}),
-        # The LENGTH of what was written, never a character of it.
+        # The length of what was written, never a character of it.
         out_chars=sum(len(op.model_dump_json()) for op in plan.operations),
     )
     return {
@@ -568,8 +536,7 @@ def _judge(llm: LlmBundle, state: dict) -> dict:
 def _answer(llm: LlmBundle, state: dict) -> dict:
     started = time.monotonic()
     ans = llm.answer(state["instruction"], state["retrieved"], state["history"])
-    # `verified` is counted in `_verify`, which is where the checking happens; here
-    # the number is what the MODEL claimed, which is the other half worth knowing.
+    # What the MODEL claimed. `_verify` counts what actually checked out.
     _node_log("answer", state, started, citations=len(ans.citations), chars=len(ans.text))
     return {"answer": ans, "llm_calls": state.get("llm_calls", 0) + 1}
 
@@ -578,19 +545,18 @@ def _answer(llm: LlmBundle, state: dict) -> dict:
 
 
 def _verify(state: dict) -> dict:
-    """No LLM. Delegates to `ai/verify.py` — imported as `vf`, because a node named
-    `_verify` that calls a module named `verify` is exactly the kind of five-minute
-    confusion a live pairing round cannot afford."""
+    """No LLM. Delegates to `ai/verify.py`, imported as `vf` so that a node named
+    `_verify` calling a module named `verify` is not a five-minute confusion."""
     if state.get("error"):
         return {"status": "error", "message": state["error"], "operations": []}
 
-    # THE FAILURE PRINCIPLE, spent here. An unresolved understanding never entered a
-    # branch, so there is no plan and no answer to emit — literally the empty list.
+    # An unresolved understanding never entered a branch, so there is no plan and no
+    # answer to emit — literally the empty list.
     u = state["understanding"]
     if not u.resolved:
-        # The budget is spent: this is a TERMINAL outcome, not another question. Status
+        # The budget is spent: a TERMINAL outcome, not another question. Status
         # "no_change" is what stops the client storing it as a pending question and
-        # re-sending it forever (§17.8, P6).
+        # re-sending it forever.
         if u.clarify_exhausted:
             return {
                 "status": "no_change",
@@ -607,12 +573,10 @@ def _verify(state: dict) -> dict:
 
     if state["intent"] == "answer":
         ans = state["answer"]
-        # The unpack that keeps `verify.py` free of `schemas.py` (§19.5). One line, in the
-        # layer that already owns `Answer`.
+        # The unpack that keeps `verify.py` free of `schemas.py`.
         cites = [(c.kind, c.ref, c.quote) for c in ans.citations]
         # An answer built from part of the document always says which part it could not
-        # read. `.get` with a default because `retrieve` is skipped on some paths and a
-        # KeyError inside the terminal node is a 502 with nothing a user could act on.
+        # read. `.get` because `retrieve` is skipped on some paths.
         retrieved = state.get("retrieved")
         limits = (
             vf.partial_context_warning(
@@ -631,10 +595,8 @@ def _verify(state: dict) -> dict:
             "operations": [],
         }
 
-    # `.get`, not a bare subscript. An intent that reached no generating branch — an
-    # unmapped one routed straight here by `_branch` (§22.12 point 3) — leaves no plan in
-    # state, and a KeyError raised inside a node is a 502 with no sentence the user could
-    # read. Nothing to emit is a clean "nothing changed", which is what this node is for.
+    # `.get`, not a bare subscript: an intent that reached no generating branch leaves no
+    # plan in state, and a KeyError inside a node is a 502 with nothing a user can read.
     plan = state.get("plan")
     if plan is None:
         return {
@@ -651,14 +613,18 @@ def _verify(state: dict) -> dict:
             "operations": [],
         }
 
-    warnings: list[str] = []
+    # An edit planned from PART of the specification says so, exactly as an answer built
+    # from part of one does. Read from the state channel rather than from `retrieved`,
+    # because `plan_ops` never visits `retrieve` and so leaves no `Retrieved` behind —
+    # the branch where a blind `replace_text` is likeliest is the branch that had no
+    # channel to warn on.
+    warnings: list[str] = vf.partial_spec_warning(state.get("spec_omitted") or [])
     # A shipped-but-criticised draft always tells the user why.
     if (verdict := state.get("verdict")) is not None and judge_failed(verdict):
         warnings += [f"Reviewer note: {f}" for f in verdict.failures]
-    # A shipped-but-UNREVIEWED draft always tells the user that, too. The judge's deadline
-    # branch returns a synthetic pass so the retry loop stops; without this line that pass
-    # is indistinguishable from a real one and the user receives generated claim text that
-    # nothing checked, with no indication. This is the only place it can be produced.
+    # A shipped-but-UNREVIEWED draft says so too. The judge's deadline branch returns a
+    # synthetic pass to stop the retry loop; without this line it is indistinguishable
+    # from a real one and the user receives claim text that nothing checked.
     if state.get("judge_skipped"):
         warnings.append(JUDGE_SKIPPED_NOTE)
 
@@ -668,12 +634,9 @@ def _verify(state: dict) -> dict:
     except PlanError as exc:
         return {"status": "error", "message": str(exc), "operations": []}
 
-    # NO APPLY HERE. The graph emits OPERATIONS; the route is the sole applier. This
-    # node used to dry-run the plan, after which the route applied the same operations to
-    # the same html a second time, so every applied /chat turn ran the whole deterministic
-    # pipeline twice against a budget measured for one pass. `require()` stays: it is a
-    # pure schema check, it costs microseconds, and it is what turns a malformed plan into
-    # a readable terminal error inside run 1.
+    # The graph emits OPERATIONS; the route is the sole applier. Applying here as well
+    # ran the whole deterministic pipeline twice per request. `require()` stays: it is a
+    # pure schema check that turns a malformed plan into a readable terminal error.
     return {
         "status": "edit",
         "message": plan.message,

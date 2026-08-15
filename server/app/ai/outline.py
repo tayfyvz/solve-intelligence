@@ -1,21 +1,17 @@
-"""Three plain-text views of a parsed document, for three different callers.
+"""Plain-text views of a parsed document, for callers with different needs.
 
-`build_outline` is what the planner reads to UNDERSTAND a document; `build_context` and
-`claims_excerpt` are what the generating nodes read to WRITE one. The split exists
-because an outline truncated at 240 characters cannot answer "what does claim 4 depend
-on?" — and, as the live pre-flight proved, cannot support rewriting a claim either: the
-model correctly refused, asking to be shown the text first.
+`build_outline` is what the planner reads to UNDERSTAND a document; `build_context`,
+`build_spec`, `claims_excerpt` and `section_excerpt` are what the generating nodes read
+to WRITE one. An outline truncated at 240 characters cannot answer "what does claim 4
+depend on?", and cannot support rewriting a claim either.
 
 `build_context` additionally decides **which parts of the document the question needs**.
-On a 37-page patent the whole text does not fit in any sane budget, so the non-claim
-paragraphs are ranked by lexical overlap with the question, packed to the budget, and
-rendered in document order — and whatever did not fit is named, both inline and in a
-manifest, so the user is never told an answer is complete when it is not.
+On a patent too long for any sane budget the non-claim paragraphs are ranked by lexical
+overlap with the question, packed to the budget, rendered in document order, and whatever
+did not fit is NAMED — inline and in a manifest — so the user is never told an answer is
+complete when it is not.
 
-All three emit plain text and never HTML. The model must not start thinking in markup.
-
-Imports `document.py` and nothing else in this package; nothing imports this except the
-graph's nodes.
+All of these emit plain text and never HTML: the model must not start thinking in markup.
 """
 
 from __future__ import annotations
@@ -25,29 +21,22 @@ from dataclasses import dataclass
 
 from app.ai.document import HEADING_TAGS, Block, ParsedDocument, block_text
 
-__all__ = [
-    "STOPWORDS",
-    "content_tokens",
-    "ContextView",
-    "Section",
-    "block_text",
-    "build_outline",
-    "build_context",
-    "claims_excerpt",
-    "section_excerpt",
-    "sections",
-    "tokens",
-]
-
 OUTLINE_HEADER = "DOCUMENT OUTLINE (reference only — do not copy it back)"
 CONTEXT_HEADER = "DOCUMENT CONTEXT (reference only, do not copy it back)"
 CONTEXT_TAIL = "\n… (context truncated — the document is longer than shown) …"
 
 _OUTLINE_LIMITS = (240, 120, 60)
-_OUTLINE_KEEP = 10  # claim lines kept at each end when tier 4 drops the middle
+_OUTLINE_KEEP = 10  # claim lines kept at each end when the last tier drops the middle
 
-# The label a section with no heading of its own gets. It has to read as a place a user
-# could point at, because it is quoted back to them in the "not shown" warning.
+# The three per-view ceilings, named rather than left as bare keyword defaults so that
+# `prompts.worst_case_prompt_chars` can add them up. A budget nothing can total is not a
+# budget; it is four numbers that happen to be small.
+MAX_OUTLINE_CHARS = 8_000
+MAX_CLAIMS_EXCERPT_CHARS = 30_000
+MAX_SECTION_EXCERPT_CHARS = 30_000
+
+# The label a section with no heading gets. It has to read as a place a user could point
+# at, because it is quoted back to them in the "not shown" warning.
 UNTITLED_SECTION = "the opening text (no heading)"
 
 
@@ -60,37 +49,24 @@ def _headings(blocks: list[Block]) -> list[str]:
 
 
 _PSEUDO_HEADING_MAX_WORDS = 8
-# Any of . ! ? : ; ends a clause far more often than it ends a hand-typed heading, so a
-# block carrying one of these is read as a sentence, not a section name.
+# Any of . ! ? : ; ends a clause far more often than a hand-typed heading, so a block
+# carrying one reads as a sentence rather than a section name.
 _PSEUDO_HEADING_END_RE = re.compile(r"[.!?:;]\s*$")
 
 
 def _reads_as_heading(block: Block) -> bool:
     """A plain paragraph shaped like a hand-typed section header rather than prose.
 
-    This exists because a user who types a new section by hand rarely reaches for the
-    editor's H1/H2/H3 toolbar buttons (`client/src/features/editor/Toolbar.tsx`) — they select
-    a short line and press Cmd+B to make it stand out, which parses as an ordinary `<p>`
-    with a whole-block bold mark, not a heading tag. `document.py`'s claims-region
-    absorption (parse(), ~line 439) then folds that paragraph and whatever follows it into
-    the PRECEDING claim as continuation blocks, because from pure structure a short bold
-    line is indistinguishable from a claim's own continuation prose — document.py's own
-    comment on `_is_claims_heading` makes the same admission about a different ambiguity.
-    Reparsing to split on this heuristic was rejected: it would let a genuine bold,
-    short continuation paragraph silently end a real claim's region and misfile whatever
-    came after it, trading a labeling gap for a claim-identity bug (CLAUDE.md invariants
-    4-6). This function is read-only and changes no structure; see `_embedded_headings`.
+    A user adding a section rarely reaches for the editor's H1/H2/H3 buttons — they
+    select a short line and press Cmd+B, which parses as a `<p>` with a whole-block bold
+    mark, not a heading tag. `parse()` then folds that paragraph into the preceding claim
+    as a continuation block, because from pure structure a short bold line is
+    indistinguishable from a claim's own continuation prose.
 
-    Bounded like `_is_claims_heading` (document.py), and for the same reason — no single
-    signal is safe alone in ordinary patent prose, so all three must agree:
-      - the block's ONLY mark is a whole-block bold (`marks == ("strong",)`);
-      - <= 8 words — a heading names a topic, a sentence states a fact, and this domain's
-        sentences run longer far more often than not;
-      - no sentence-ending punctuation — "The widget is round." is emphasised prose,
-        "Details" and "Test Results" are not sentences.
-    A false positive costs one extra, honest line in `build_outline`, never a structural
-    change — so erring toward catching more is the safe direction here, unlike in
-    `_is_claims_heading` where a false positive would misroute real claims.
+    Three signals must agree, because none is safe alone in patent prose: the block's
+    only mark is a whole-block bold, it runs to at most eight words, and it has no
+    sentence-ending punctuation. This function is read-only — a false positive costs one
+    extra honest line in the outline, never a structural change.
     """
     if block.tag != "p" or block.marks != ("strong",):
         return False
@@ -103,17 +79,11 @@ def _reads_as_heading(block: Block) -> bool:
 def _embedded_headings(blocks: list[Block]) -> list[str]:
     """Hand-typed pseudo-headings hiding in a run of body blocks, in order.
 
-    Presentation only. It does not move a block, does not touch `document.py`'s parse or
-    claim-absorption logic, and cannot change which claim a paragraph belongs to or how
-    renumbering / round-trip identity behave — it only changes what `build_outline` SAYS
-    about blocks that are already there. It exists because `build_outline` is the ONLY
-    thing `understand` reads (UNDERSTAND_SYSTEM: "the OUTLINE does not list it" is the
-    literal test for "this document does not contain that"), and a section a user typed
-    by hand — no heading tag — is invisible to `_headings()` even though `build_context`
-    already retrieves its text correctly (confirmed live: a claim's continuation blocks
-    and a preamble section's body blocks are both rendered in full in `build_context`'s
-    output). The bug was never that the content was unreachable; it was that `understand`
-    was never told it existed, so it dead-ended before `build_context` ever ran.
+    Presentation only: it moves nothing and changes no structure. It exists because the
+    outline is the ONLY thing `understand` reads, and its rule is "the outline does not
+    list it" means "the document does not contain it" — so a section the user typed by
+    hand was invisible, and `understand` dead-ended on a question about text that
+    `build_context` would have retrieved perfectly well.
     """
     return [block_text(b) for b in blocks if _reads_as_heading(b)]
 
@@ -170,12 +140,11 @@ def _outline(doc: ParsedDocument, limit: int, *, drop_middle: bool) -> str:
     )
 
 
-def build_outline(doc: ParsedDocument, *, max_chars: int = 8000) -> str:
+def build_outline(doc: ParsedDocument, *, max_chars: int = MAX_OUTLINE_CHARS) -> str:
     """A one-line-per-claim map of the document, for the planner.
 
-    Four deterministic tiers, each evaluated only if the previous result is still too
-    long — never a "shrink until it fits" loop, so the same document always produces the
-    same string.
+    Four tiers, each evaluated only if the previous result is still too long — never a
+    "shrink until it fits" loop, so the same document always produces the same string.
     """
     for limit in _OUTLINE_LIMITS:
         out = _outline(doc, limit, drop_middle=False)
@@ -188,37 +157,27 @@ def build_outline(doc: ParsedDocument, *, max_chars: int = 8000) -> str:
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
-# A short list of ENGLISH INFLECTIONS and nothing else. It folds "volumes"/"volume",
-# "filters"/"filtering" and "oxygenating"/"oxygenate" together — the mismatch a user
-# actually hits when their question and the patent describe the same thing in different
-# grammatical forms.
+# A short list of English inflections and nothing else. It folds "volumes"/"volume" and
+# "oxygenating"/"oxygenate" together — the mismatch a user actually hits when their
+# question and the patent describe the same thing in different grammatical forms.
 #
-# `-er`/`-ers`/`-ly`/`-est` are DELIBERATELY ABSENT. They were tried and removed: they
-# merge "prime"/"primer" (a PCR primer is not priming) and "number"/"numb", while at the
-# same time SPLITTING "filters"→"filt" from "filtering"→"filter". One suffix family caused
-# both a false match and a miss, which is the worst of both, and in a legal document a
-# false match is the more expensive half.
-#
-# It does NOT touch synonymy: "fill volume" against a document that says "priming volume"
-# still scores zero, and no lexical scheme can fix that. That case is DETECTED instead
-# (`ContextView.matched`) and the user is told to quote a phrase.
+# `-er`/`-ly`/`-est` are DELIBERATELY ABSENT. They were tried and removed: they merge
+# "prime"/"primer" (a PCR primer is not priming) while splitting "filters"→"filt" from
+# "filtering"→"filter" — a false match and a miss from one suffix family.
 _SUFFIXES = ("ing", "ed")
-_MIN_STEM = 4  # below this, stripping turns "gas" into "ga" and "the" into "th"
-# The trailing `e` measures against a LOWER floor, which is what folds "gases" onto "gas"
-# ("gases" -> "gase" -> "gas") and "bases" onto "bas". At 4 it would stop at "gase" and
-# miss the commonest noun in this domain.
+_MIN_STEM = 4  # below this, stripping turns "gas" into "ga"
+# The trailing `e` measures against a LOWER floor, which is what folds "gases" onto "gas".
 _MIN_Y_STEM = 3
 
 
 def stem(word: str) -> str:
     """Fold one English inflection off a word, for scoring only.
 
-    THE TRAILING `e` IS THE POINT, and it is why this is not a two-line suffix strip.
-    Without it "volumes" folds to "volume" while "volume" stays "volume" — the two forms
-    still miss each other and the whole exercise buys nothing. Stripping it from both lands
-    them on "volum", and does the same for "oxygenating"/"oxygenate" and "gases"/"gas".
+    The trailing `e` is the point: without it "volumes" folds to "volume" while "volume"
+    stays "volume", so the two forms still miss each other. Stripping it from both lands
+    them on "volum".
 
-    A stem is a SORT KEY and nothing else. It never reaches the model, the document or a
+    A stem is a sort key and nothing else — it never reaches the model, the document or a
     citation, so a wrong fold costs relevance and can never cost correctness.
     """
     for suffix, replacement in (("ies", "y"), ("ied", "y")):
@@ -239,21 +198,13 @@ def stem(word: str) -> str:
 
 
 def tokens(text: str) -> set[str]:
-    """The scoring key for a piece of text: lowercase words, one inflection folded off.
-
-    Both sides of every comparison go through this, so the folding only has to be
-    CONSISTENT, not linguistically correct.
-    """
+    """The scoring key for a piece of text. Both sides of every comparison go through
+    this, so the folding only has to be CONSISTENT, not linguistically correct."""
     return {stem(word) for word in _WORD_RE.findall(text.lower())}
 
 
-# ~40 common English words. Kept as a literal rather than pulled from a library: it is
-# read once, in a lexical-overlap score, and a dependency for forty strings is a joke.
-# It lives here rather than in `nodes.py` because `build_context` scores sections with
-# it and `outline.py` may not import `nodes.py` — nodes imports outline. `nodes.py`
-# re-exports both names, so every existing caller reads unchanged.
-#
-# RAW, and subtracted BEFORE stemming — see `content_tokens`.
+# ~40 common English words, kept as a literal: a dependency for forty strings is a joke.
+# Raw, and subtracted BEFORE stemming — see `content_tokens`.
 STOPWORDS = frozenset(
     """a an and are as at be but by can could do does for from has have how i if in
     into is it its me my of on or please should so than that the their them then there
@@ -265,11 +216,10 @@ def content_tokens(text: str) -> set[str]:
     """The question's content words, as scoring keys.
 
     Stopwords are removed BEFORE stemming, and the order is the whole point. Stemming
-    first and subtracting after deletes any content word whose STEM collides with a
-    stopword's: "shoulder" folds to "should", so `tokens(q) - STOPWORDS` silently dropped
-    it and a question about the shoulder of a housing was answered "none of the words in
-    your question appear in this document" — with the word sitting right there. Same for
-    "thane"/"than", "wither"/"with", "theirs"/"their".
+    first and subtracting after deletes any content word whose stem collides with a
+    stopword's — "shoulder" folds to "should" — so a question about the shoulder of a
+    housing was answered "none of the words in your question appear in this document"
+    with the word sitting right there.
     """
     return {stem(word) for word in _WORD_RE.findall(text.lower()) if word not in STOPWORDS}
 
@@ -282,8 +232,7 @@ class Section:
     """A heading and the body blocks under it, from the NON-claim regions.
 
     The claims are not sections: they have their own model, their own numbering rules and
-    their own view (`claims_excerpt`). This type describes the specification around them —
-    Field, Background, Summary, Detailed Description, Abstract — which is where a
+    their own view. This type describes the specification around them, which is where a
     question about "the Background" has to be answered from.
     """
 
@@ -299,8 +248,7 @@ class Section:
 
 def sections(doc: ParsedDocument) -> list[Section]:
     """Split the preamble and postamble into heading-delimited sections, in document
-    order, preamble first. A document with no headings at all yields one untitled
-    section holding everything."""
+    order. A document with no headings yields one untitled section holding everything."""
     out: list[Section] = []
     for blocks, after in ((doc.preamble, False), (doc.postamble, True)):
         heading, body = "", []
@@ -318,12 +266,10 @@ def sections(doc: ParsedDocument) -> list[Section]:
 
 Ref = tuple[int, int]  # (section index, paragraph index)
 
-# A heading match is a TIEBREAK, not a multiplier. Uncapped, `len(words & heading_tokens)`
-# scaled with the heading's length, so on "what is the priming volume in the detailed
-# description of the preferred embodiments?" every filler paragraph under that 6-word
-# heading scored 4 while the paragraph actually containing "priming volume … 220
-# millilitres" scored 2 and never made the cut — naming a section actively destroyed
-# retrieval whenever the fact was filed somewhere else, which in a patent is the norm.
+# A heading match is a TIEBREAK, not a multiplier. Uncapped, the bonus scaled with the
+# heading's length, so "what is the priming volume in the detailed description of the
+# preferred embodiments?" gave every filler paragraph under that heading a score of 4
+# while the paragraph actually containing the answer scored 2 and never made the cut.
 _HEADING_BONUS_CAP = 1
 
 
@@ -331,17 +277,13 @@ def _rank(secs: list[Section], words: set[str]) -> tuple[list[Ref], bool]:
     """(section, paragraph) pairs most relevant first, and whether ANYTHING matched.
 
     A paragraph scores on its own overlap with the question plus a capped bonus if the
-    question's words hit its section HEADING, so "what does the Background say about
-    priming volume?" pulls the whole Background forward and not merely the paragraphs that
-    happen to repeat the noun.
+    question's words hit its section heading.
 
-    When NOTHING scores — the question's words appear nowhere, which happens whenever the
-    user's vocabulary differs from the document's ("priming volume" vs "fill volume") and
-    on every "summarise this patent" — the fallback is round-robin ACROSS sections rather
-    than document order. Document order answers "summarise this" from the front of the
-    first section and omits the section literally called Summary; round-robin gives every
-    section its opening paragraphs, which is what a summary needs. Both keys are total
-    orders, so either way the same document and question give the same ranking.
+    When nothing scores — the question's vocabulary differs from the document's, or the
+    question is "summarise this" — the fallback is round-robin ACROSS sections rather
+    than document order, which would answer "summarise this" from the front of the first
+    section and omit the section literally called Summary. Both keys are total orders, so
+    the same document and question always give the same ranking.
     """
     scored: list[tuple[int, int, int]] = []
     matched = False
@@ -363,10 +305,13 @@ class _Pack:
     """What survived the budget, and the one paragraph that was cut down rather than cut."""
 
     kept: frozenset[Ref] = frozenset()
-    # The TOP-RANKED paragraph, when it alone was bigger than the whole budget:
-    # (section, paragraph, characters kept). Never more than one — everything behind it
-    # keeps the ordinary skip rule.
+    # The top-ranked paragraph, when it alone was bigger than the whole budget:
+    # (section, paragraph, characters kept). Never more than one.
     clipped: tuple[int, int, int] | None = None
+
+
+# Below this there is no room for a clip worth reading, so the ordinary skip stands.
+_MIN_CLIP_CHARS = 200
 
 
 def _pack(secs: list[Section], order: list[Ref], budget: int) -> _Pack:
@@ -374,14 +319,12 @@ def _pack(secs: list[Section], order: list[Ref], budget: int) -> _Pack:
 
     Two rules, and the second exists because the first alone breaks a promise:
 
-    1. A paragraph too big for the REMAINING budget is SKIPPED rather than ending the
-       walk, so one 9,000-character paragraph cannot shut out the twenty short ones
-       behind it. Same greedy rule as `nodes.select_paragraphs`.
-    2. **Except the top-ranked one.** A single Detailed Description paragraph larger than
-       the whole budget is not exotic, and skipping it drops the only paragraph that
-       mentions the question at all, fills the budget with prose that scored zero, and
-       then tells the user to "ask about that section by name" — advice that provably
-       cannot work, because asking again produces the same skip. It is clipped instead.
+    1. A paragraph too big for the REMAINING budget is skipped rather than ending the
+       walk, so one 9,000-character paragraph cannot shut out twenty short ones behind it.
+    2. **Except the top-ranked one.** Skipping it drops the only paragraph that mentions
+       the question at all, fills the budget with prose that scored zero, and then tells
+       the user to "ask about that section by name" — advice that provably cannot work,
+       because asking again produces the same skip. It is clipped instead.
     """
     kept: set[Ref] = set()
     clipped: tuple[int, int, int] | None = None
@@ -398,17 +341,11 @@ def _pack(secs: list[Section], order: list[Ref], budget: int) -> _Pack:
     return _Pack(frozenset(kept), clipped)
 
 
-# Below this there is no room for a clip worth reading, so the ordinary skip stands.
-_MIN_CLIP_CHARS = 200
-
-
-# The inline elision marker. Bracketed, like the `[4]` claim prefix, so that it reads as
-# this program's scaffolding rather than as the document's own words — and `verify.py`
-# recognises the shape, so a model that quotes one gets the actionable sentence about a
-# partly-read document instead of an accusation of inventing a quotation.
+# The inline elision marker. Bracketed, like the `[4]` claim prefix, so it reads as this
+# program's scaffolding rather than the document's own words — and `verify.py` recognises
+# the shape, so a model that quotes one gets an actionable sentence about a partly-read
+# document instead of an accusation of inventing a quotation.
 OMITTED_MARK = "[… {n} paragraph{s} not shown here …]"
-
-
 CLIPPED_MARK = "[… the rest of this paragraph is not shown here …]"
 
 
@@ -420,21 +357,20 @@ def _elision(n: int) -> str:
 class ContextView:
     """What the answer node is shown, and what it was not shown.
 
-    `omitted` is the whole point of the type. A string alone cannot tell the caller that
-    a question about the Detailed Description was answered from the claims, and that is
-    exactly the case the user has to be told about.
+    `omitted` is the whole point of the type: a string alone cannot tell the caller that
+    a question about the Detailed Description was answered from the claims.
     """
 
     text: str
     omitted: tuple[str, ...] = ()  # labels of sections not shown IN FULL
     omitted_paragraphs: int = 0
-    # False when NOTHING in the question matched the document's wording, so what was kept
-    # was chosen by position, not by relevance. Without this the user is told "I did not
-    # see all of X" — literally true and completely misleading, because it implies the
-    # parts they WERE shown were the relevant ones.
+    # False when NOTHING in the question matched, so what was kept was chosen by position
+    # rather than relevance. Without this the user is told "I did not see all of X" —
+    # literally true and completely misleading, because it implies what they WERE shown
+    # was the relevant part.
     matched: bool = True
-    # False when the document has no headings at all (a .txt import). "Ask about a section
-    # by name" is unfollowable then, and a user who tries makes the retrieval WORSE.
+    # False when the document has no headings at all. "Ask about a section by name" is
+    # unfollowable then, and a user who tries makes the retrieval worse.
     headed: bool = True
 
 
@@ -461,7 +397,6 @@ def _render_region(
                     run = 0
                 text = block_text(block)
                 if clip is not None and (clip[0], clip[1]) == (si, bi):
-                    # Cut down rather than cut out — see `_pack` rule 2.
                     text = text[: clip[2]].rstrip() + " " + CLIPPED_MARK
                 body.append(text)
             else:
@@ -469,14 +404,14 @@ def _render_region(
         if run:
             body.append(_elision(run))
         dropped += sum(1 for bi in range(len(section.blocks)) if bi not in shown)
-        # A clipped paragraph is shown but NOT in full, so its section is still "partial".
+        # A clipped paragraph is shown but NOT in full, so its section is still partial.
         clipped_here = clip is not None and clip[0] == si
         if shown or not section.blocks:
             lines += ["", f"## {section.label}", *body]
         else:
-            # Nothing of it survived: naming it here as well as in the manifest would
-            # give the model a heading with no text under it, which reads as "this
-            # section is empty" rather than "you have not been shown it".
+            # Nothing of it survived. Naming it here as well as in the manifest would give
+            # the model a heading with no text under it, which reads as "this section is
+            # empty" rather than "you have not been shown it".
             partial.append(section.label)
             continue
         if clipped_here or any(bi not in shown for bi in range(len(section.blocks))):
@@ -485,9 +420,8 @@ def _render_region(
 
 
 def _claim_lines(claim, *, first_limit: int | None, rest_limit: int | None) -> list[str]:
-    # The bracket form [N], not "N.", so that context echoed back by the model can never
-    # be mistaken for a claim prefix by CLAIM_PREFIX_RE. A small thing that closes a real
-    # feedback loop.
+    # The bracket form [N], not "N.", so context echoed back by the model can never be
+    # mistaken for a claim prefix by CLAIM_PREFIX_RE.
     head = block_text(claim.blocks[0])
     lines = [f"[{claim.number}] " + (_truncate(head, first_limit) if first_limit else head)]
     for block in claim.blocks[1:]:
@@ -497,18 +431,15 @@ def _claim_lines(claim, *, first_limit: int | None, rest_limit: int | None) -> l
 
 
 def _manifest(omitted: tuple[str, ...], shown: int, total: int) -> list[str]:
-    """The NOT SHOWN block. Built separately from the body because tier 5 cuts the body by
-    bytes, and on a 900-claim document that cut severed this block entirely — leaving
-    `ANSWER_SYSTEM` rule 2b naming a marker the model was never given, on exactly the
-    documents where it matters most."""
+    """The NOT SHOWN block. Built separately from the body because the last tier cuts the
+    body by bytes, and on a 900-claim document that cut severed this block entirely."""
     if not omitted:
         return []
     lines = ["", "--- NOT SHOWN IN FULL ---"]
-    # The NUMBERS, because a model asked "how many embodiments are described?" counts what
-    # is in front of it and does not experience that as guessing. Given the two totals it
-    # can answer honestly instead. Omitted entirely when there is no description at all: a
-    # claims-only document would otherwise be told "you were shown 0 of 0 paragraphs",
-    # which invites it to call the document empty while it is holding twenty claims.
+    # The numbers, because a model asked "how many embodiments are described?" counts
+    # what is in front of it and does not experience that as guessing. Omitted entirely
+    # when there is no description: "you were shown 0 of 0 paragraphs" invites the model
+    # to call the document empty while it is holding twenty claims.
     if total:
         lines.append(f"You were shown {shown} of this document's {total} description paragraphs.")
     return [
@@ -518,9 +449,8 @@ def _manifest(omitted: tuple[str, ...], shown: int, total: int) -> list[str]:
     ]
 
 
-# Claim lines kept at each end when a tier windows the claim list. Same shape and the
-# same number as `build_outline`'s `_OUTLINE_KEEP`, because it is the same idea: the ends
-# of a claim set carry the independent claims and the most recently added ones.
+# Claim lines kept at each end when a tier windows the claim list. Same idea as
+# `_OUTLINE_KEEP`: the ends carry the independent claims and the most recent ones.
 _CLAIMS_KEEP = 10
 
 CLAIMS_OMITTED_MARK = "[… {n} claims in the middle of the list not shown here …]"
@@ -531,21 +461,17 @@ def _claims_block(
 ) -> tuple[list[str], str | None]:
     """The claim lines, and the label to report if the list itself was cut.
 
-    Windowing exists for one shape: a document whose CLAIMS alone fill the budget. Without
-    it the description is unreachable at every tier — there is no tier in which claims
-    yield to prose — so a question about the Background on a 900-claim document is answered
-    from 289 claims and nothing else, which is not an answer.
+    Windowing exists for one shape: a document whose CLAIMS alone fill the budget.
+    Without it the description is unreachable at every tier, so a question about the
+    Background on a 900-claim document is answered from 289 claims and nothing else.
     """
     if not doc.claims:
         return ["(none)"], None
     claims = doc.claims
-    cut: str | None = None
     if window and len(claims) > 2 * _CLAIMS_KEEP:
         head, tail = claims[:_CLAIMS_KEEP], claims[-_CLAIMS_KEEP:]
-        # Counted, never labelled by the numbers at the window edges. The parser records
-        # claim numbers VERBATIM, so a document with duplicates produces "claims 3-3" and
-        # one with 21 claims produces "claims 11-11" — both true of nothing. A count is
-        # correct whatever the numbering does.
+        # Counted, never labelled by the numbers at the window edges: the parser records
+        # claim numbers verbatim, so a document with duplicates produces "claims 3-3".
         missing = len(claims) - 2 * _CLAIMS_KEEP
         lines: list[str] = []
         for claim in head:
@@ -557,7 +483,7 @@ def _claims_block(
     lines = []
     for claim in claims:
         lines += _claim_lines(claim, first_limit=first_limit, rest_limit=rest_limit)
-    return lines, cut
+    return lines, None
 
 
 def _context(
@@ -586,14 +512,11 @@ def _context(
     parts += ["", "--- SECTIONS AFTER THE CLAIMS ---"]
     parts += after or ["(none)"]
 
-    # The windowed claims are reported in the same list as the sections, because from the
+    # Windowed claims are reported in the same list as the sections, because from the
     # user's side they are the same fact: part of the document was not read.
     omitted = tuple(
         dict.fromkeys(before_partial + after_partial + ([claims_cut] if claims_cut else []))
     )
-    # Named, in the context itself, so the model can say "that is in the Detailed
-    # Description, which I was not shown" instead of guessing. The user gets the same list
-    # as a warning — see `verify.partial_context_warning`.
     total = sum(len(sec.blocks) for sec in secs)
     dropped = before_dropped + after_dropped
     return ContextView(
@@ -617,36 +540,27 @@ def build_context(
     "shrink until it fits" loop, so the same document and question give the same bytes.
     `words` is the question's content words.
 
-    **The default budget holds a whole 37-page patent, so tier 1 wins on every realistic
-    document and no retrieval happens at all.** That is deliberate, and it is measured
-    rather than assumed: at a 106,827-character context the `answer` call ran in a median
-    2.3 s (n=6, min 1.6 s, max 3.5 s) — *faster* than the same questions at a 30,000-char
-    budget, where a fragmented context made the model work harder and one call hit the
-    12 s node timeout outright. Retrieval exists for what is above the budget, which is
-    reachable by design: `max_html_chars` is 200,000.
+    The shipped budget holds a whole 37-page patent, so tier 1 wins on every realistic
+    document and no retrieval happens at all. Retrieval exists for what is above the
+    budget, which is reachable by design because `max_html_chars` is 200,000.
 
     Tier 5 is the guarantee: the result is never longer than `max_chars`, for any
-    document, including a pathological single claim of a million characters — PROVIDED
-    `max_chars` leaves room for the "not shown" manifest, which is re-attached after the
-    hard cut rather than being cut with the body. Below a few hundred characters the
-    manifest alone exceeds the budget and the result overshoots; that is unreachable from
-    `Settings`, where the smallest sane value is four orders of magnitude larger, and the
-    manifest is the one thing worth overshooting for.
+    document — provided `max_chars` leaves room for the manifest, which is re-attached
+    after the hard cut rather than being cut with the body.
     """
     secs = sections(doc)
     order, matched = _rank(secs, set(words))
     everything = _Pack(
         frozenset((si, bi) for si, sec in enumerate(secs) for bi in range(len(sec.blocks)))
     )
-    # Every section that survives costs a blank line and a `## label` line that no
-    # paragraph's own length accounts for. Charged UP FRONT at the worst case — all of
-    # them survive — because an unbudgeted overhead made every packing tier overshoot by
-    # the same amount, so trimming the claims in tiers 3 and 4 handed the freed bytes
-    # straight back and the document fell to tier 5's blind cut regardless.
+    # Every surviving section costs a blank line and a `## label` line that no paragraph's
+    # own length accounts for. Charged up front at the worst case: unbudgeted, this
+    # overhead made every packing tier overshoot by the same amount, so trimming the
+    # claims handed the freed bytes straight back and the document fell to tier 5 anyway.
     headings_cost = sum(len(s.label) + 4 for s in secs)
 
-    # (claim first-block limit, claim continuation limit, "pack the sections?",
-    #  "window the claim LIST?")
+    # (claim first-block limit, claim continuation limit, pack the sections?,
+    #  window the claim LIST?)
     tiers: tuple[tuple[int | None, int | None, bool, bool], ...] = (
         (None, None, False, False),  # 1. the whole document
         (None, None, True, False),  # 2. claims in full + the paragraphs the question needs
@@ -683,10 +597,19 @@ def build_context(
         if len(view.text) <= max_chars:
             return view
 
-    # 5. Even the claims alone do not fit. Cut the BODY and re-attach the manifest, rather
-    #    than cutting the string end to end: a blind byte cut severed the
-    #    `--- NOT SHOWN IN FULL ---` block on exactly the documents that need it, leaving
-    #    ANSWER_SYSTEM rule 2b naming a marker the model had never been given.
+    # Even the claims alone do not fit. Cut the BODY and re-attach the manifest.
+    return _hard_cut(view, secs, max_chars=max_chars)
+
+
+def _hard_cut(view: ContextView, secs: list[Section], *, max_chars: int) -> ContextView:
+    """The last resort every tiered view shares: cut the body by bytes, then re-attach
+    the manifest.
+
+    A blind end-to-end byte cut severed the "NOT SHOWN IN FULL" block on exactly the
+    documents that need it — the ones so long that the tiers all overshot. Rebuilding the
+    manifest after the cut is what keeps invariant 11 true at the one size where it is
+    hardest to keep.
+    """
     omitted = view.omitted or (UNTITLED_SECTION,)
     total = sum(len(sec.blocks) for sec in secs)
     manifest = "\n".join(_manifest(omitted, total - view.omitted_paragraphs, total))
@@ -701,12 +624,110 @@ def build_context(
     )
 
 
-def claims_excerpt(doc: ParsedDocument, numbers, *, max_chars: int = 30_000) -> str:
-    """The full text of selected claims — the view every GENERATING node reads.
+# ------------------------------------------------------- the specification, for editing
+
+SPEC_HEADER = (
+    "SPECIFICATION BODY — the document's non-claim text (reference only, do not copy it "
+    "back). Quote from it verbatim when you need a `find` string."
+)
+
+
+def _spec(doc: ParsedDocument, secs: list[Section], pack: _Pack, *, matched: bool) -> ContextView:
+    """`_context` without the claims. Same regions, same elision markers, same manifest.
+
+    The claims are deliberately absent: every caller of `build_spec` already holds
+    `claims_excerpt`, which carries the claims it is about to rewrite IN FULL. Rendering
+    them twice would spend the budget on text the model is already looking at.
+    """
+    before, before_partial, before_dropped = _render_region(secs, pack, after_claims=False)
+    after, after_partial, after_dropped = _render_region(secs, pack, after_claims=True)
+
+    parts = [SPEC_HEADER]
+    parts += ["", "--- SECTIONS BEFORE THE CLAIMS ---"]
+    parts += before or ["(none)"]
+    parts += ["", "--- SECTIONS AFTER THE CLAIMS ---"]
+    parts += after or ["(none)"]
+
+    omitted = tuple(dict.fromkeys(before_partial + after_partial))
+    total = sum(len(sec.blocks) for sec in secs)
+    dropped = before_dropped + after_dropped
+    return ContextView(
+        text="\n".join([*parts, *_manifest(omitted, total - dropped, total)]),
+        omitted=omitted,
+        omitted_paragraphs=dropped,
+        matched=matched or not omitted,
+        headed=any(s.heading for s in secs) or not secs,
+    )
+
+
+def build_spec(
+    doc: ParsedDocument,
+    words: set[str] | frozenset[str] = frozenset(),
+    *,
+    max_chars: int = 200_000,
+) -> ContextView:
+    """The specification body as the EDITING nodes read it.
+
+    `plan_ops` can emit `replace_text`, which is document-wide, literal and case
+    sensitive — so a model that has never seen the description has to invent the `find`
+    string it is matching against. `draft` has the same problem one step further on:
+    prose written without the surrounding specification uses terminology the document
+    does not.
+
+    Two tiers, evaluated not looped, exactly as `build_context` does it:
+
+    1. the whole specification, which is what every document this app accepts reaches —
+       `max_chars` defaults at `max_html_chars`, and the sections are a strict subset of
+       the HTML they were parsed from;
+    2. the paragraphs this instruction scores against, packed to the budget, with
+       everything else named.
+
+    Tier 1 does not read `words` at all, so on the normal path the rendered text is a
+    pure function of the DOCUMENT — identical from turn to turn, which is what lets the
+    prompt prefix stay cached across a conversation. Tier 2 is question-scoped and
+    therefore cache-cold by nature; that is the price of a document too big to show, and
+    it is only reachable below the default budget.
+
+    Returns an empty view for a document with no specification text at all — which is
+    both seed patents, since they are pure claim sets — so callers can omit the block
+    rather than emit a header with "(none)" twice under it.
+
+    Bounded by `max_chars` on the same terms as `build_context`: provided the budget
+    leaves room for the manifest, which is re-attached AFTER the hard cut rather than
+    cut with the body. Below that the manifest wins and the result overshoots, because
+    naming what was dropped (invariant 11) matters more than the last hundred bytes.
+    """
+    secs = sections(doc)
+    if not any(sec.blocks for sec in secs):
+        return ContextView(text="", headed=any(s.heading for s in secs) or not secs)
+
+    order, matched = _rank(secs, set(words))
+    everything = _Pack(
+        frozenset((si, bi) for si, sec in enumerate(secs) for bi in range(len(sec.blocks)))
+    )
+    view = _spec(doc, secs, everything, matched=matched)
+    if len(view.text) <= max_chars:
+        return view
+
+    # Same accounting as `build_context`: charge the scaffolding and the `## label` lines
+    # up front, so the pack depends only on the document and the instruction.
+    headings_cost = sum(len(s.label) + 4 for s in secs)
+    empty = _spec(doc, secs, _Pack(), matched=matched)
+    budget = max(0, max_chars - len(empty.text) - headings_cost)
+    view = _spec(doc, secs, _pack(secs, order, budget), matched=matched)
+    if len(view.text) <= max_chars:
+        return view
+    return _hard_cut(view, secs, max_chars=max_chars)
+
+
+def claims_excerpt(
+    doc: ParsedDocument, numbers, *, max_chars: int = MAX_CLAIMS_EXCERPT_CHARS
+) -> str:
+    """The full text of selected claims — the view every generating node reads.
 
     Never truncated per claim: truncating the very text a node is about to rewrite is
-    the defect the live pre-flight found. An empty or fully-unknown set returns "", and
-    the caller omits the block rather than emitting an empty header.
+    what made a model refuse and ask to be shown the claim. An empty or fully-unknown set
+    returns "", and the caller omits the block rather than emitting an empty header.
     """
     wanted = set(numbers)
     claims = sorted((c for c in doc.claims if c.number in wanted), key=lambda c: (c.number, c.uid))
@@ -721,20 +742,16 @@ def claims_excerpt(doc: ParsedDocument, numbers, *, max_chars: int = 30_000) -> 
     return out[: max(0, max_chars - len(CONTEXT_TAIL))] + CONTEXT_TAIL
 
 
-def section_excerpt(doc: ParsedDocument, heading: str | None, *, max_chars: int = 30_000) -> str:
-    """The full text of one named non-claim section — the view a GENERATING node reads
-    when `understand` resolved the request to a section rather than to claims.
+def section_excerpt(
+    doc: ParsedDocument, heading: str | None, *, max_chars: int = MAX_SECTION_EXCERPT_CHARS
+) -> str:
+    """The full text of one named non-claim section, for a generating node whose request
+    `understand` resolved to a section rather than to claims.
 
-    Mirrors `claims_excerpt`: matched by heading text only (verbatim, case-insensitive —
-    `understand` is required to copy the heading exactly from the outline, PLAN_SYSTEM
-    rule 9's sibling rule), truncated rather than dropped when it does not fit, and "" for
-    no match. `None`/"" heading (target_kind != "section") also returns "" so callers can
-    call this unconditionally.
-
-    Without this, a request like "make the Appendix more professional" reaches `draft`
-    with nothing but the outline's one-line heading list — the section's actual prose is
-    invisible — and the model, correctly, refuses and asks the user to paste the text
-    back in. Fixing that is the whole point of this function existing.
+    Mirrors `claims_excerpt`: matched by heading text only, case-insensitively, and "" for
+    no match — so callers can call it unconditionally. Without it, "make the Appendix more
+    professional" reached `draft` with nothing but the outline's heading list, and the
+    model asked the user to paste the text back in.
     """
     if not heading:
         return ""

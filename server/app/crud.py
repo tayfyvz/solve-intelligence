@@ -25,20 +25,18 @@ class NameTaken(Exception):
     """
 
 
-# Neither document response carries version content, but `lazy="selectin"` would
-# still fetch every draft's full body whenever a Document is loaded. Deferred
-# here rather than on the column itself: a column-level defer also leaves
-# `content` unloaded on the PUT path, where assigning to an unloaded attribute
-# marks it dirty unconditionally and quietly changes what `update_version` below
-# is doing.
+# No document response carries version content, but `lazy="selectin"` would still fetch
+# every draft's body whenever a Document is loaded. Deferred here rather than on the
+# column: a column-level defer also leaves `content` unloaded on the PUT path, where
+# assigning to an unloaded attribute marks it dirty unconditionally.
 _WITHOUT_CONTENT = selectinload(Document.versions).defer(DocumentVersion.content)
 
 # One retry per competing writer we expect in practice (two or three browser tabs).
 CREATE_VERSION_ATTEMPTS = 3
 
-# The patent list needs three aggregates over a patent's versions. Computed in
-# SQL and selected as plain columns: loading the versions to count them in Python
-# would pull every draft body across for a list of titles.
+# Three aggregates over a patent's versions, computed in SQL and selected as plain
+# columns: counting them in Python would pull every draft body across for a list of
+# titles.
 _DOCUMENT_ROWS: Select[Any] = (
     select(
         Document.id,
@@ -214,13 +212,13 @@ def create_version(
     name: str | None = None,
     source: str = "user",
 ) -> DocumentVersion:
-    """Reading MAX+1 and then inserting is a race: two tabs saving at the same
-    moment compute the same number and the unique constraint rejects one of them.
-    Retrying recomputes MAX+1 against the row the winner just committed, so the
-    loser gets the next number instead of an unhandled IntegrityError.
+    """Reading MAX+1 and then inserting is a race: two tabs saving at the same moment
+    compute the same number and the unique constraint rejects one. Retrying recomputes
+    MAX+1 against the row the winner just committed, so the loser gets the next number
+    rather than an unhandled IntegrityError.
 
-    Raises VersionNumberConflict if every attempt loses, or NameTaken if an
-    explicitly supplied name lost.
+    Raises VersionNumberConflict if every attempt loses, or NameTaken if an explicitly
+    supplied name lost.
     """
     for _ in range(CREATE_VERSION_ATTEMPTS):
         number = max_version_number(db, document.id) + 1
@@ -236,10 +234,9 @@ def create_version(
             db.commit()
         except IntegrityError:
             db.rollback()
-            # Two unique indexes can reject this insert. Asking the database which
-            # one is more honest than parsing the driver's message — and an
-            # auto-generated name is never the answer, because the next attempt
-            # picks a fresh free one.
+            # Two unique indexes can reject this insert. Asking the database which one
+            # is more honest than parsing the driver's message — and an auto-generated
+            # name is never the answer, because the next attempt picks a fresh one.
             if name is not None and version_name_taken(db, document.id, name):
                 raise NameTaken(name) from None
             continue
@@ -263,12 +260,11 @@ def update_version(db: Session, version: DocumentVersion, content: str) -> Docum
 
 
 def delete_version(db: Session, version: DocumentVersion) -> None:
-    """Deletes one version. The caller must already have refused deleting a
-    document's last remaining version — this layer does not re-check, so it is
-    never called with a document about to be left at zero.
+    """Deletes one version. The caller must already have refused deleting a document's
+    last remaining version; this layer does not re-check.
 
-    Other versions keep their own `version_number`: it is a stable identifier,
-    not a positional index, so nothing here renumbers what remains.
+    Other versions keep their own `version_number`: it is a stable identifier, not a
+    positional index, so nothing here renumbers what remains.
     """
     db.delete(version)
     db.commit()
@@ -290,13 +286,12 @@ def rename_version(db: Session, version: DocumentVersion, name: str) -> Document
 def seed_if_empty(db: Session) -> int:
     """Insert the seed patents if the table is empty. Returns documents inserted.
 
-    The guard is a count, not hardcoded ids: with a file-backed database, an
-    unconditional `insert(id=1)` raises IntegrityError on the second boot and the
-    app never starts.
+    The guard is a count, not hardcoded ids: with a file-backed database an
+    unconditional `insert(id=1)` raises IntegrityError on the second boot and the app
+    never starts.
 
-    Deliberately does not sanitise: a test asserts the seed survives the
-    sanitiser unchanged, so a broken allowlist fails loudly instead of quietly
-    mangling the seed at boot.
+    Deliberately does not sanitise. A test asserts the seed survives the sanitiser
+    unchanged, so a broken allowlist fails loudly instead of mangling the seed at boot.
     """
     if db.scalar(select(func.count()).select_from(Document)):
         return 0

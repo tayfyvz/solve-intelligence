@@ -4,11 +4,9 @@ Two guarantees, and everything in the AI layer rests on them:
 
 1. **Identity on canonical input** — `render(parse(x)) == x` for any `x` already in
    TipTap's `getHTML()` shape. Both seeds are stored in that shape.
-2. **Idempotence in general** — with `f = render ∘ parse`, `f(y) == f(f(y))` for any
-   `y`. This is what makes it safe to run an AI edit on the output of an AI edit;
+2. **Idempotence in general** — with `f = render ∘ parse`, `f(y) == f(f(y))` for any `y`.
+   This is what makes it safe to run an AI edit on the output of an AI edit, and
    `verify.py` enforces it at runtime.
-
-Imports neither `openai` nor `langgraph` (CLAUDE.md invariant 1, test T5).
 """
 
 from __future__ import annotations
@@ -33,36 +31,34 @@ MARK_ALIASES = {
 }
 MARK_ORDER = ("strong", "em", "s")  # deterministic nesting order for format_claim
 
-# BLOCK_TAGS is exactly `app.sanitize.ALLOWED_TAGS - INLINE_ONLY_TAGS`, and T9 asserts
-# that as a set equation rather than sampling it. The correspondence is load-bearing:
-# the sanitiser allows hr, blockquote, pre and h4–h6, so an engine that coerced them to
-# <p> would let an AI edit destroy content that Save had preserved.
+# Exactly `app.sanitize.ALLOWED_TAGS - INLINE_ONLY_TAGS`, and a test asserts that as a
+# set equation. The correspondence is load-bearing: the sanitiser allows hr, blockquote,
+# pre and h4-h6, so an engine that coerced them to <p> would let an AI edit destroy
+# content that Save had preserved.
 BLOCK_TAGS = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "blockquote", "pre", "hr"}
 INLINE_ONLY_TAGS = frozenset({"li", "br", "code", "strong", "em", "s"})
 VOID_TAGS = {"hr"}  # rendered `<hr>`, never `<hr></hr>`; html is always ""
 HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 NO_COLLAPSE_TAGS = {"pre"}  # whitespace is significant inside a code block
 INLINE_DESCEND_TAGS = {"strong", "b", "em", "i", "s", "del", "strike", "code", "span"}
-# Removed with their contents at parse, the one place where dropping text is right: this
-# is `app.sanitize.STRIP_CONTENT_TAGS`, and T-DROP asserts the two are the same set.
+# Removed with their contents at parse — the one place where dropping text is right.
+# This is `app.sanitize.STRIP_CONTENT_TAGS`, and a test asserts the two are one set.
 DROP_TAGS = {"script", "style"}
 
 # `li` is deliberately not a block tag: parse walks top-level children only, so a
 # <ul>/<ol> is ONE block whose html holds its <li>s verbatim. `code` and `br` likewise.
 _INLINE_TAGS = INLINE_ONLY_TAGS | INLINE_DESCEND_TAGS
 
-# The single most dangerous line in the file. `HTMLFormatter()`'s constructor defaults
+# The single most dangerous line in the file. `HTMLFormatter()` defaults
 # entity_substitution to None, which DISABLES escaping: `<p>a &amp; b &lt;script&gt;</p>`
-# would serialise as `<p>a & b <script></p>` — escaped text becoming live markup. T4
-# fails loudly if this argument is ever dropped.
+# would serialise as `<p>a & b <script></p>` — escaped text becoming live markup.
 #
-# substitute_xml, NOT substitute_html. Both enable
-# escaping, so both close C17. They differ on everything else: substitute_html also
-# names every non-ASCII character, so `café — 3°` serialises as `caf&eacute; &mdash;
-# &deg;` while TipTap emits the characters raw — and identity, render(parse(x)) == x,
-# would be false for any patent containing an em-dash or an accent. Both seeds are
-# pure ASCII, so no other test would have noticed. substitute_xml escapes exactly
-# `&`, `<` and `>`, which is precisely what the browser's serialiser does.
+# substitute_xml, NOT substitute_html. Both enable escaping; they differ on everything
+# else. substitute_html also names every non-ASCII character, so `café — 3°` becomes
+# `caf&eacute; &mdash; &deg;` while TipTap emits it raw — and identity would be false for
+# any patent containing an em-dash or an accent. Both seeds are pure ASCII, so no other
+# test would notice. substitute_xml escapes exactly `&`, `<` and `>`, which is what the
+# browser's serialiser does.
 FORMATTER = HTMLFormatter(
     entity_substitution=EntitySubstitution.substitute_xml,
     void_element_close_prefix="",  # `<br>`, not bs4's default `<br/>`
@@ -70,10 +66,9 @@ FORMATTER = HTMLFormatter(
 
 CLAIM_PREFIX_RE = re.compile(r"^(\d{1,3})([.)])\s+(?=\S)")
 
-# A cross-reference inside claim text: "claim 4", "Claims 12". Defined here rather than
-# in apply.py because it describes a property of claim TEXT, not a step of the applier —
-# and because both apply.py (the renumber remap) and verify.py need it. In apply.py it
-# would make verify.py import apply.py, which imports verify.py.
+# A cross-reference inside claim text: "claim 4", "Claims 12". It lives here because it
+# describes a property of claim TEXT, and because both apply.py and verify.py need it —
+# in apply.py it would make verify.py import apply.py, which imports verify.py.
 REF_RE = re.compile(r"\b(claims?)(\s+)(\d{1,3})\b", re.IGNORECASE)
 
 CLAIMS_HEADING_TEXTS = frozenset(
@@ -137,9 +132,9 @@ def all_blocks(doc: ParsedDocument) -> list[Block]:
 def escape_text(text: str) -> str:
     """Escape LLM-authored PLAIN text for insertion into Block.html. Exactly once.
 
-    quote=False is mandatory: the default turns `'` into `&#x27;` and TipTap emits the
-    raw apostrophe, so "the system's" would flip a byte on the very next round trip.
-    Text already in Block.html IS html and must never be re-escaped.
+    quote=False is mandatory: the default turns `'` into `&#x27;` while TipTap emits the
+    raw apostrophe, so "the system's" would flip a byte on the very next round trip. Text
+    already in Block.html IS html and must never be re-escaped.
     """
     return _escape(text, quote=False)
 
@@ -157,10 +152,10 @@ def canonical_text(text: str) -> str:
     """The exact shape `parse()` would give this text if it were a block of its own.
 
     LLM-authored prose routinely carries a trailing newline or a double space between
-    sentences. Written through `escape_text` alone, those bytes survive into Block.html,
-    the next parse collapses them, `render(after) != after_html`, and VF-E3 discards a
-    correct plan with a sentence about an internal invariant. Normalising at the point of
-    insertion is the fix; weakening the idempotence check is not.
+    sentences. Written through `escape_text` alone those bytes survive into Block.html,
+    the next parse collapses them, and the verifier discards a correct plan with a
+    sentence about an internal invariant. Normalising on insertion is the fix; weakening
+    the idempotence check is not.
     """
     return collapse_text(text).strip()
 
@@ -182,10 +177,10 @@ def _coerce_to_p(el: Tag, soup: BeautifulSoup) -> Tag:
 
 
 def _unwrap_container(el: Tag, out: list[Tag], soup: BeautifulSoup, depth: int) -> None:
-    # Unwrapping, not coercion. Coercing <div><p>1. a</p><p>2. b</p></div> to a <p>
-    # produced block elements nested inside a <p>, which html.parser re-reads as three
-    # sibling paragraphs on the next parse — so f(y) == f(f(y)) was false for the single
-    # most common shape pasted in from Word. Unwrapping converges in one pass.
+    # Unwrapping, not coercion. Coercing <div><p>1. a</p><p>2. b</p></div> to a <p> nests
+    # block elements inside a <p>, which html.parser re-reads as three sibling paragraphs
+    # on the next parse — so f(y) == f(f(y)) was false for the commonest shape pasted in
+    # from Word. Unwrapping converges in one pass.
     if depth > 10:
         # A bound, not a guess: a pathological <div><div><div>… must not recurse forever.
         out.append(_coerce_to_p(el, soup))
@@ -224,8 +219,8 @@ def _collect(nodes: list, out: list[Tag], soup: BeautifulSoup, depth: int) -> No
 def _top_level_blocks(html: str) -> list[Tag]:
     # html.parser, never lxml: different auto-closing behaviour, and it is not a dependency.
     soup = BeautifulSoup(html, "html.parser")
-    # Dropped WITH their text, exactly as `sanitize.clean_content_tags` does it on the
-    # save path. Unwrapping them instead — the default for a tag we do not model — turns
+    # Dropped WITH their text, exactly as the save path's sanitiser does. Unwrapping
+    # them instead — the default for a tag we do not model — turns
     # `<script>alert(1)</script>` into a visible paragraph reading "alert(1)": inert, but
     # the AI path would be promoting to prose what Save deletes.
     for element in soup.find_all(list(DROP_TAGS)):
@@ -350,11 +345,10 @@ def _is_claims_heading(block: Block) -> bool:
     """A heading introduces the claims region when its folded text is one of the known
     phrases, OR when it is a short heading containing the word "claim"/"claims".
 
-    The containment arm exists because replace_text is document-wide: an instruction as
-    innocent as "change Claims to Patent Claims" would otherwise make the heading
-    undetectable on re-parse and a legitimate edit would be refused. Bounded at six
-    words so that a body-style heading like "Comparison with the claims of US 1,234,567"
-    — prose, not a region marker — cannot capture the region.
+    The containment arm exists because replace_text is document-wide: "change Claims to
+    Patent Claims" would otherwise make the heading undetectable on re-parse and a
+    legitimate edit would be refused. Bounded at six words so that prose like "Comparison
+    with the claims of US 1,234,567" cannot capture the region.
     """
     if block.tag not in HEADING_TAGS:
         return False
@@ -378,11 +372,11 @@ def _region_bounds(
             )
             return i, i + 1, end
 
-    # Fallback: no heading. C11 — "the first run of >=2 ADJACENT prefixed paragraphs" is
-    # unimplementable, because Patent 1's claim 1 spans five paragraphs and only the
-    # first carries a prefix, so the first adjacent run starts at claim 2. ">=2 hits
-    # document-wide, terminated at the next heading, re-validated inside the region" is
-    # the implementable form of the same intent.
+    # Fallback with no heading. "The first run of >=2 ADJACENT prefixed paragraphs" is
+    # unimplementable: Patent 1's claim 1 spans five paragraphs and only the first carries
+    # a prefix, so the first adjacent run would start at claim 2. ">=2 hits document-wide,
+    # terminated at the next heading, re-validated inside the region" is the implementable
+    # form of the same intent.
     hits = [i for i, b in enumerate(blocks) if b.tag == "p" and prefixes[i] is not None]
     if len(hits) < 2:
         return None, 0, 0

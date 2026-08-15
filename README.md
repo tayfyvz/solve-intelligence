@@ -348,15 +348,12 @@ coverage number.
   browser against the real API.
 - The AI routes inject a fake graph; the graph tests inject fake LLM callables. Two seams, two
   levels, and neither reaches the network.
-- A contract test asserts the client's TypeScript types still mirror the server's Pydantic models,
-  so renaming a field on either side goes red instead of failing silently at runtime.
-
 The stress pass found four defects that no test could have caught, because by design no test makes a
 live API call. The most serious: `reasoning_effort` and `temperature != 1` turn out to be **mutually
 exclusive** on this model, and the shipped configuration sent both — so three of the five nodes
 returned 400 on every live call. The pre-flight had measured each parameter *independently* and
-recorded both as accepted. Both measurements were correct; the combination was never tried. There is
-now a test that asserts the **shipped call**, which is the assertion that was missing.
+recorded both as accepted. Both measurements were correct; the combination was never tried.
+`reasoning_effort` is no longer sent at all, and the setting for it is gone.
 
 ---
 

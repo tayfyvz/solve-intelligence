@@ -80,8 +80,20 @@ Violating any of these is a bug, not a style preference.
     returns a `ContextView` carrying the labels of the sections it could not fit; `_retrieve`
     puts them on `Retrieved.omitted_sections`, and `_verify` turns them into a user-visible
     warning. There is no path on which the Q&A branch answers from part of a document and says
-    nothing about it. L3 and L15 assert both halves.
-12. **Navigation never dispatches a document transaction.** The outline and the find bar read
+    nothing about it. L3 and L15 assert both halves. **The editing branch owes the same debt
+    and pays it on its own channel**: `build_spec`'s omissions travel on the `spec_omitted`
+    state channel — not on `Retrieved`, because `plan_ops` never visits `retrieve` and leaves
+    no `Retrieved` behind — and `_verify` renders them with `partial_spec_warning`, which is
+    worded for someone deciding whether to save rather than someone deciding what to ask next.
+12. **Every per-view ceiling is totalled by `prompts.worst_case_prompt_chars`, and the total
+    is asserted against `max_prompt_chars`.** Before it, `max_answer_context_chars` read like
+    a bound on the prompt while bounding one block of it, with the outline and the uploaded
+    file outside the number entirely. Raising any single cap past what the model can hold now
+    fails a three-second test instead of a user's request. The ceilings it adds up are named
+    constants (`MAX_OUTLINE_CHARS`, `MAX_CLAIMS_EXCERPT_CHARS`, `MAX_SECTION_EXCERPT_CHARS`)
+    rather than bare keyword defaults, for exactly this reason: a budget nothing can total is
+    not a budget, it is four numbers that happen to be small.
+13. **Navigation never dispatches a document transaction.** The outline and the find bar read
     `editor.state.doc` and call `scrollIntoView`; the only transaction either sends is `paint()`,
     which is meta-only (`docChanged === false`). This is what lets navigation coexist with
     invariant 7 — and it is why there is no paginated editor. N3/N4 assert `getHTML()` and the
@@ -98,8 +110,8 @@ Confirmed by running the real libraries — do not re-derive or assume otherwise
   but `client.beta.chat` is a live alias and `.parse` is a working bound method. The design is
   unaffected, because we use the stable path either way; only the justification was false, and a
   false justification defended out loud is worse than none.)*
-- **`temperature` and `reasoning_effort` are MUTUALLY EXCLUSIVE on `gpt-5.2-2025-12-11`, and that
-  is the fact that matters.** Measured 2026-08-14 (PLAN §27.4 correction 40):
+- **`reasoning_effort` IS NOT SENT, and the setting for it has been removed.** It and a
+  `temperature` other than the default 1 are mutually exclusive on `gpt-5.2-2025-12-11`:
 
   | `reasoning_effort` | `temperature` | Result |
   |---|---|---|
@@ -108,18 +120,13 @@ Confirmed by running the real libraries — do not re-derive or assume otherwise
   | absent | `0.0` | accepted |
   | `"low"` | `0.0` | **400 — "does not support 0.0 with this model"** |
 
-  4Z measured each parameter **on its own** and recorded both as accepted; both of those
-  measurements are correct, and the combination was never tried. The shipped config used exactly
-  the failing pair, so `understand`, `plan_ops` and `judge` returned 400 on every live call.
-  **The resolution: `openai_reasoning_effort` defaults to `None`.** `reasoning_effort` is the one
-  dropped because 4Z also measured `reasoning_tokens == 0` on all 14 calls — it buys nothing here —
-  while `temperature=0` is load-bearing for PLAN §21.2's deliberate split: `temperature=0` on the
-  deterministic-output nodes (`understand`, `plan_ops`, `judge`), omitted on `draft`/`answer`.
-  **Re-enabling `reasoning_effort` requires clearing those three temperatures in the same change**;
-  tests `L11` and `L12` fail if you do only one of the two.
-  *(An earlier version of this file said "a reasoning model: do not send `temperature`". That was
-  an assumption, and it was wrong for the stated reason — but it happened to describe a working
-  configuration, which is why the correction to it did not surface this until a live click-through.)*
+  Each parameter was measured on its own and recorded as accepted; both measurements were
+  correct and the combination was never tried, so the shipped config used exactly the failing
+  pair and `understand`, `plan_ops` and `judge` returned 400 on every live call.
+  `reasoning_effort` is the one that went, because `reasoning_tokens` measured 0 on all 14
+  calls — it buys nothing here — while `temperature=0` is what makes the deterministic nodes
+  (`understand`, `plan_ops`, `judge`) resolve the same instruction the same way twice.
+  **Sending it again means clearing those three temperatures in the same change.**
 - **Reasoning tokens are zero on this model.** `usage.completion_tokens_details.reasoning_tokens`
   was **0 on all 14 measured calls**; completion tokens ranged 74–129. `max_completion_tokens`
   ceilings are therefore bounded by the *visible* answer only — keep them generous because they
@@ -127,8 +134,7 @@ Confirmed by running the real libraries — do not re-derive or assume otherwise
 - **Measured latency for one `chat.completions.parse` call** (14 live calls, 2026-08-13, the real
   schemas over the seed outline): **min 1.1 s, median 1.5 s, max 6.7 s** (the 6.7 s was an
   `insert_section` request carrying prior-art text). The five-call worst case at the observed max
-  is ~33 s. `reasoning_effort="low"` is accepted **on its own** — but see the mutual-exclusion row
-  above before setting it; it is shipped as `None`.
+  is ~33 s.
 - **A WHOLE patent in one `answer` call is FASTER than any packed context, at every size
   tried.** Measured 2026-08-14, real schemas, real key, on the two real documents:
 
@@ -163,8 +169,16 @@ Confirmed by running the real libraries — do not re-derive or assume otherwise
   | 30,000 (question-scoped) | 3,712 / 5,332 | **0** / 5,135 | 1,664 / 5,275 |
 
   99.3% cached from turn 2, with no code: OpenAI caches automatically above ~1,024 tokens,
-  and the document sits at the FRONT of the system message where a cached prefix needs it.
-  The old context was rebuilt per question, so the prefix moved and the cache thrashed.
+  and **everything that varies per turn sits AFTER the document** — the history and the
+  instruction are separate messages that follow the system message, so the whole system
+  message is a stable prefix. *(An earlier version of this file said the document "sits at
+  the FRONT of the system message". It does not — ~35 lines of static RULES come first, and
+  they are harmless precisely because they are static. The design is right and the
+  measurement stands; only the reason given for it was wrong, and a wrong reason invites a
+  later reader to "fix" the ordering to match it.)* The old context was rebuilt per question,
+  so the prefix moved and the cache thrashed. **The prefix also goes cold on any accepted
+  edit**, since the document in the system message changes — the table above is three
+  consecutive questions, which is the Q&A pattern, not the ask→edit→ask one.
   **This is why whole-document context is also the cheaper option in a conversation** —
   cached input bills at a fraction of fresh input, so from turn 2 the 120,000-char prompt
   costs less than the 30,000-char one it replaced. Do not reorder the system message to put
@@ -248,9 +262,12 @@ Tests must justify their existence — target ~20 meaningful ones, not a coverag
 
 **AI chat section deletion is authorized as of 2026-08-14**, on the repo owner's explicit
 direction ("deletion must be available, no restriction"). `delete_section` was cut from the
-original six-op vocabulary (PLAN §1.1) because the planner is never shown a section's body, so it
+original six-op vocabulary (PLAN §1.1) because the planner was never shown a section's body, so it
 could not safely build a `find` string for `replace_text`, and because a wrong deletion's failure
-mode is destroying the patent. Reinstated as a seventh op that sidesteps both: it matches a section
+mode is destroying the patent. *(The first half of that premise expired when `build_spec` shipped —
+the planner IS shown the body now. The op did not change and must not: matching by heading is what
+makes it structurally unable to reach the claims, which was always the load-bearing half.)*
+Reinstated as a seventh op that sidesteps both: it matches a section
 by **heading text only** (the same way `insert_section` already addresses one), and it structurally
 cannot reach the claims — `doc.claims_heading` is its own field, never a member of the
 `preamble`/`postamble` lists this op searches, so "delete the Claims section" finds nothing to
@@ -280,7 +297,16 @@ the model reads. What is now **allowed** is exactly one mechanism, and no more:
   description's paragraphs by word overlap with the question, packs them to a fixed budget in
   rank order, renders them in document order, and **names everything it left out**. It is pure
   Python over the parsed document — the same shape as `nodes.select_paragraphs`, which has been
-  there since Task 2.
+  there since Task 2. `outline.build_spec` is the same machinery (`sections` → `_rank` →
+  `_pack` → `_render_region` → `_manifest`, shared, not copied) rendering the non-claim text
+  for the editing path.
+
+  **Every question side of every ranking uses `content_tokens`, never `tokens`.** Stopwords
+  come off before stemming, for the reason `content_tokens`' docstring gives. One call —
+  the uploaded file's — used raw `tokens` and so scored paragraphs on how often they said
+  "the": it ranked by length and function-word density, picked the wrong excerpt out of a
+  long file, and never raised, logged or failed anything. The only symptom of getting this
+  wrong is a worse answer, which is why it is written down here.
 
 What is **still banned**, and why the line is here and not further out:
 
@@ -288,6 +314,21 @@ What is **still banned**, and why the line is here and not further out:
   is persisted, nothing is warmed. Retrieval is a pure function of (document, question).
 - **Chunking with overlap, re-ranking models, or a retrieval loop.** Tiers are *evaluated*, never
   iterated — see invariant 10.
-- **Retrieval on the editing path.** Only the `answer` branch retrieves; `plan_ops` and `draft`
-  still read `claims_excerpt`, in full, for the reason PLAN §21.6 records.
+- ~~**Retrieval on the editing path.**~~ **Authorized as of 2026-08-14**, on the repo owner's
+  explicit direction, and the ban's own premise is what retired it. It was written when
+  context was assumed expensive. The measurements two sections above disproved that on this
+  model — whole-document context is *faster* at every size tried, and cached input makes it
+  *cheaper* from turn 2 — so the cost side of the trade was gone while the correctness cost
+  stayed. And it was real: `replace_text` is document-wide, literal and case-sensitive, so a
+  planner shown only the outline had to invent the `find` string it was matching. An invented
+  one matches nothing, edits nothing, and reports success. `draft` had the same defect one
+  step on, writing generic patent English past a document with its own vocabulary.
+
+  What is allowed is `outline.build_spec` and nothing more: the same deterministic, lexical,
+  tiered mechanism `build_context` already uses, over the non-claim text, at
+  `max_spec_context_chars` (defaulted to `max_html_chars`, so tier 1 wins on every document
+  this app accepts and the rendered text stays a pure function of the document — which is
+  what keeps the prefix cacheable). It excludes the claims deliberately: both callers already
+  hold `claims_excerpt`. `plan_ops` builds the view itself because it never visits `retrieve`;
+  both routes go through `nodes.spec_view` so they cannot drift.
 - Everything else on the list above, unchanged.

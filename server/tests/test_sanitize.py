@@ -1,7 +1,8 @@
-"""V11 — the data-loss guard.
+"""The save path's allowlist.
 
-Stripping a tag StarterKit renders destroys the user's content on save, so the
-"preserves" half of this test matters as much as the "strips" half.
+Stripping a tag TipTap's StarterKit renders destroys the user's content on save, so the
+"preserves" half matters as much as the "strips" half: a data-loss bug wearing a security
+costume.
 """
 
 import pytest
@@ -17,11 +18,13 @@ STRIPPED = [
     ('<iframe src="evil"></iframe><p>a</p>', "<p>a</p>"),
     ('<p style="color:red">a</p>', "<p>a</p>"),
     ("<!-- comment --><p>a</p>", "<p>a</p>"),
+    # nh3's `attributes=` does not fully replace its defaults: `title` and `lang` are
+    # permitted on every allowed tag regardless. Both are inert, so this documents the
+    # surprise rather than working around it — and fails loudly if a future nh3 starts
+    # letting something less inert through.
+    ('<p title="t" lang="en" id="x">a</p>', '<p title="t" lang="en">a</p>'),
 ]
 
-# One behaviour, so one test: parametrising these inflates a single guarantee
-# into a dozen reported cases. The seed patents are not repeated here — they are
-# covered by test_seed.py and the client's seedRoundTrip.test.ts.
 PRESERVED = [
     "",
     "<p><strong>1. A</strong></p>",
@@ -39,46 +42,27 @@ PRESERVED = [
 
 
 @pytest.mark.parametrize(("html", "expected"), STRIPPED)
-def test_dangerous_html_is_stripped(html: str, expected: str) -> None:
+def test_dangerous_html_is_stripped_and_editor_html_survives(html: str, expected: str) -> None:
     assert sanitize_html(html) == expected
+    for safe in PRESERVED:
+        assert sanitize_html(safe) == safe
 
 
-def test_editor_html_survives_unchanged() -> None:
-    for html in PRESERVED:
-        assert sanitize_html(html) == html
-
-
-TEXT = [
-    ("<script>alert(1)</script>Widget", "Widget"),
-    ("<b>Widget</b>", "Widget"),
-    ('<img src="x" onerror="alert(1)">Widget', "Widget"),
-    ("Widget\r\nfor\tblood", "Widget for blood"),  # a name is one line
-    ("Widget\x00\x07", "Widget"),
-    # The half that matters as much: ordinary punctuation in a real patent title.
-    ("R&D widget", "R&D widget"),
-    ("Method for cooling to T < 50 °C", "Method for cooling to T < 50 °C"),
-    (
-        "Wireless optogenetic device — v2 (100 % duty)",
-        "Wireless optogenetic device — v2 (100 % duty)",
-    ),
-]
-
-
-@pytest.mark.parametrize(("raw", "expected"), TEXT)
-def test_names_are_reduced_to_plain_text(raw: str, expected: str) -> None:
-    """`content` was the only field that passed a sanitiser, leaving a title and a
-    version name as the one string on this server that reaches a browser exactly
-    as typed. Defence in depth — React escapes today — but these names are also
-    quoted back inside 409 messages."""
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("<script>alert(1)</script>Widget", "Widget"),
+        ("<b>Widget</b>", "Widget"),
+        ('<img src="x" onerror="alert(1)">Widget', "Widget"),
+        ("Widget\r\nfor\tblood", "Widget for blood"),  # a name is one line
+        ("Widget\x00\x07", "Widget"),
+        # The half that matters as much: ordinary punctuation in a real patent title.
+        ("R&D widget", "R&D widget"),
+        ("Method for cooling to T < 50 °C", "Method for cooling to T < 50 °C"),
+        ("Wireless device — v2 (100 % duty)", "Wireless device — v2 (100 % duty)"),
+    ],
+)
+def test_names_are_reduced_to_plain_text_without_mangling_punctuation(
+    raw: str, expected: str
+) -> None:
     assert sanitize_text(raw) == expected
-
-
-def test_title_and_lang_survive_despite_the_attribute_allowlist() -> None:
-    """Pins nh3's actual behaviour, not the behaviour the allowlist implies.
-
-    `attributes=` does not fully replace nh3's defaults: `title` and `lang` are
-    permitted on every allowed tag regardless. Both are inert, so this documents
-    the surprise rather than working around it — and fails loudly if a future nh3
-    starts letting something less inert through.
-    """
-    assert sanitize_html('<p title="t" lang="en" id="x">a</p>') == '<p title="t" lang="en">a</p>'

@@ -1,18 +1,11 @@
 """Contracts between the language model and the deterministic engine.
 
-**No field constraints on a planner-facing model.** `Field(ge=…)`, `min_length`,
-`pattern` and friends make `to_strict_json_schema` emit `"minimum": 1` and its
-relatives; whether strict Structured Outputs rejects those is unverifiable without a
-key, so avoiding them is a free mitigation under an assumption (C3) — and it is labelled
-as an assumption, not a verified fact. **Every bound is enforced in Python after
-parsing**, by `require()`. P2 enforces the split mechanically so nobody has to remember
-it.
+Two rules hold the file together:
 
-Planner-facing (passed as `response_format`): EditPlan, Op, Understanding, JudgeVerdict,
-Answer, Citation. Internal (never a response_format, so constraints are welcome):
-Retrieved, Proposal.
-
-This module must never import `openai` or `langgraph` (invariant 1, test T5).
+- **No field constraints on a planner-facing model.** `Field(ge=…)`, `min_length` and
+  friends make `to_strict_json_schema` emit JSON-schema keywords whose acceptance we
+  cannot verify without a key, so every bound is enforced in Python by `require()`.
+- **Never imports `openai` or `langgraph`.** The engine stays testable with no key.
 """
 
 from __future__ import annotations
@@ -30,31 +23,17 @@ OpKind = Literal[
     "insert_section",
     "delete_section",
     "replace_text",
-]  # seven — delete_section was cut once and reinstated on the repo owner's
-#    explicit direction (2026-08-14): unrestricted deletion is a hard requirement. Its
-#    original blocker — the planner is never shown a section's body, so it cannot build a
-#    safe `find` string — is sidestepped by matching on HEADING text only, the same way
-#    insert_section already addresses a section by heading rather than by body text. Its
-#    original danger — deleting the Claims heading — cannot occur by construction: the
-#    claims region lives in `doc.claims_heading`, a field of its own, never in
-#    `doc.preamble`/`doc.postamble`, and delete_section only ever searches those two.
+]
 
 
 class Op(BaseModel):
-    """One flat model with optional fields, NOT a discriminated union.
-
-    Strict Structured Outputs supports anyOf, but a flat model produces one $def and one
-    obvious schema, and per-kind validation has to happen in Python anyway (REQUIRED /
-    require below). At ~10 kinds this becomes validation soup and the migration is a
-    union keyed on `kind`; naming the seam is worth more than pre-building it.
-    """
+    """One flat model with optional fields, not a discriminated union: a flat model
+    produces one obvious schema, and per-kind validation has to happen in Python anyway
+    (`REQUIRED` and `require` below)."""
 
     kind: OpKind
-    # StrictInt on both, and it is not pedantry: lax coercion accepts `true` as 1 and
-    # `"3"` as 3, so a malformed operation from a model or a tampered proposal from a
-    # client silently becomes a DELETE of a real claim. Strictness is not a constraint in
-    # the C3 sense — it emits no JSON-schema keyword — so the no-constraints rule for
-    # planner-facing models is untouched.
+    # StrictInt on both: lax coercion accepts `true` as 1 and `"3"` as 3, so a malformed
+    # operation or a tampered proposal would silently DELETE a real claim.
     claim_number: StrictInt | None = None
     after_claim_number: StrictInt | None = None  # 0 = before claim 1
     mark: Literal["bold", "italic", "strike"] | None = None
@@ -80,10 +59,8 @@ class PlanError(ValueError):
 class LlmUnavailable(RuntimeError):
     """The model returned nothing usable. Carries a message a user could read.
 
-    Raised by `llm.py` and caught by `nodes.node_guard` — and it lives HERE, with the rest
-    of the model↔engine contract, for a mechanical reason: `nodes.py` has to catch it and
-    `nodes.py` must not import `openai` (invariant 1, test T5). `llm.py` re-exports it, so
-    `from app.ai.llm import LlmUnavailable` still reads as it always did.
+    Defined here rather than in `llm.py` because `nodes.node_guard` has to catch it and
+    `nodes.py` must not import `openai`.
     """
 
 
@@ -102,14 +79,10 @@ MAX_SECTION_PARAGRAPHS = 20
 
 
 def require(op: Op) -> None:
-    """Per-kind validation. Bounds live here, not in the schema.
-
-    This IS the pre-apply validation of an operation. There is no `verify_plan`; a second
-    pre-apply validator would be a second place to keep in sync.
-    """
-    # A bare subscript on purpose: op.kind is a Pydantic-validated Literal, so a KeyError
-    # is impossible by construction, and .get() would only hide a kind added to OpKind
-    # without a REQUIRED row. P3 turns that omission into a test failure instead.
+    """Per-kind validation, and the only pre-apply validation of an operation. Bounds
+    live here rather than in the schema."""
+    # A bare subscript on purpose: `op.kind` is a validated Literal, so a KeyError is
+    # impossible unless someone adds a kind without a REQUIRED row — which a test catches.
     missing = [f for f in REQUIRED[op.kind] if getattr(op, f) is None]
     if missing:
         raise PlanError(f"The AI's {op.kind} instruction was missing: {', '.join(missing)}.")
@@ -145,31 +118,28 @@ PriorArtRole = Literal[
 class Understanding(BaseModel):
     """What the user is asking for, resolved against this document and conversation.
 
-    This model NEVER contains an operation — that is plan_ops/draft's job — which is what
-    makes an unresolved request structurally incapable of editing anything. Routing is a
-    projection of understanding, not a separate question: `intent` is one field of twelve.
+    It never contains an operation — that is plan_ops/draft's job — which is what makes
+    an unresolved request structurally incapable of editing anything.
     """
 
-    # --- what they want ------------------------------------------------------
     intent: Intent
-    restatement: str  # one sentence, second person, ALWAYS naming targets by number
-    reason: str  # one short clause, logged, never shown
+    # One sentence, second person, always naming targets by number. Not shown to the
+    # user; it exists to force the model to resolve "it" into an explicit claim number
+    # before the next field is written.
+    restatement: str
 
-    # --- what it applies to --------------------------------------------------
     target_kind: TargetKind
     claim_numbers: list[int]  # [] unless target_kind == "claims"; numbering as shown
     section_heading: str | None = None
     prior_art_role: PriorArtRole
 
-    # --- how sure it is ------------------------------------------------------
     resolved: bool  # false => a clarifying question is required
     confidence: Literal["high", "medium", "low"]
-    question: str | None = None  # required when resolved is false; one sentence, no JSON
+    question: str | None = None  # required when resolved is false
     options: list[str]  # 0-4 complete instructions the user can click
 
-    # --- terminal-outcome marker: set ONLY by resolve_outcome, never by the model.
-    # Understanding is a Structured Outputs response type, so the model emits this field
-    # whether or not the prompt names it; gate_understanding overwrites it on every path.
+    # Terminal-outcome marker, set only by `resolve_outcome`. Strict Structured Outputs
+    # makes the model emit every field, so whatever it says here is overwritten.
     clarify_exhausted: bool = False
 
 
@@ -180,37 +150,41 @@ class JudgeVerdict(BaseModel):
 
 
 def judge_failed(v: JudgeVerdict) -> bool:
-    """A verdict of "fail" with no stated failures is treated as a pass.
-
-    A judge that says "fail" but cannot name a defect gives `draft` nothing to act on, so
-    the retry would be identical and would burn a call for nothing.
-    """
+    """A "fail" with no stated failures is treated as a pass: the retry would have
+    nothing to act on and would burn a call for nothing."""
     return v.verdict == "fail" and bool(v.failures)
 
 
 class Retrieved(BaseModel):
-    """Deterministic selection of the context a generative node needs. Internal, so
-    constraints would be permitted here — there just are none worth having."""
+    """The context a generative or answering node is shown. Internal, never a
+    `response_format`."""
 
     claim_numbers: list[int] = Field(default_factory=list)
     claims_text: str = ""
-    # The full body of the ONE non-claim section `understand` resolved the request to,
-    # when target_kind == "section" — the section counterpart of `claims_text`. "" when
-    # the request targets claims, the whole document, or nothing named.
+    # The full body of the one non-claim section `understand` resolved to, when
+    # target_kind == "section". "" otherwise.
     section_text: str = ""
+    # The document's whole non-claim text, for the EDITING branch. Distinct from
+    # `section_text`, which is one resolved section: this is everything, and it is what
+    # lets `draft` write in the document's own vocabulary and quote a `find` string that
+    # actually matches. "" on the answer branch, whose `claims_text` is already the whole
+    # document, and "" for a document with no specification at all.
+    spec_text: str = ""
+    # Labels of the specification sections `build_spec` could not fit, when it could not
+    # fit them. Separate from `omitted_sections` because the two describe different
+    # views: that one is what the ANSWER branch could not read, this one is what the
+    # EDITING branch could not read, and a request can only ever produce one of them.
+    spec_omitted: list[str] = Field(default_factory=list)
     outline: str = ""
-    prior_art_excerpt: str = ""  # sanitised but NOT yet fenced — that happens once, in prompts.py
-    prior_art_truncated: bool = False
-    # Labels of the sections the Q&A branch could NOT fit into the context. Carried on
-    # the retrieval rather than recomputed in `verify`, because it is a fact about what
-    # the model was shown, and only the node that built the context knows it.
+    prior_art_excerpt: str = ""  # sanitised but NOT fenced — that happens once, in prompts.py
+    # Labels of the sections the Q&A branch could not fit. Carried here because only the
+    # node that built the context knows what it left out.
     omitted_sections: list[str] = Field(default_factory=list)
-    # False when nothing in the question matched the document's wording, so what the model
-    # was shown was chosen by position and not by relevance. The user has to be told a
-    # different sentence in that case — see `verify.partial_context_warning`.
+    # False when nothing in the question matched the document's wording, so what the
+    # model saw was chosen by position rather than relevance.
     context_matched: bool = True
-    # False when the document has no headings at all, which makes "ask about a section by
-    # name" unfollowable.
+    # False when the document has no headings, which makes "ask about a section by name"
+    # unfollowable advice.
     context_headed: bool = True
 
 
@@ -226,36 +200,17 @@ class Answer(BaseModel):
 
 
 GENERATIVE_KINDS: frozenset[str] = frozenset({"insert_claim", "replace_claim", "insert_section"})
-"""The three operations that write NEW PROSE into a legal document. The other three
-rearrange or mark text the user already wrote and approved.
+"""The three operations that write new prose into a legal document. The others only
+rearrange or mark text the user already wrote.
 
-This does NOT decide whether the user is prompted — sticky per-version consent does. It
-survives, demoted, for one job: telling the confirmation card whether the plan authors
-new text, which is the single most useful thing to know before clicking Proceed.
-
-Defined ONCE, here. `routers/ai.py` imports it; two module-level frozensets of the same
-thing is exactly how they drift.
+This does not decide whether the user is prompted — sticky per-version consent does. It
+tells the confirmation card whether the plan authors new text, which is the single most
+useful thing to know before clicking Proceed.
 """
 
 
-def authors_new_text(plan: EditPlan) -> bool:
-    """True when a plan writes new prose rather than only rearranging existing text.
-
-    Computed in Python from the operation KINDS, never from anything a model says about
-    itself. It was renamed when consent became sticky per version: its previous name
-    said it decided whether to confirm, which it no longer does, and a function whose
-    name lies is worse than no function at all. P6 greps for the old name.
-    """
-    return any(op.kind in GENERATIVE_KINDS for op in plan.operations)
-
-
 def content_hash(html: str) -> str:
-    """The binding between a proposal and the document it was computed against.
-
-    sha256 of the exact bytes the client sent, computed BEFORE parsing or sanitising, so
-    that both AI routes hash the same thing.
-
-    THE ONLY hash function in the AI surface. Two copies of a hash do not diverge loudly;
-    they diverge into a 409 on every apply, or into a check that silently stops checking.
-    """
+    """Binds a proposal to the document it was computed against: sha256 of the exact
+    bytes the client sent, before parsing or sanitising, so both AI routes hash the same
+    thing. The only hash function in the AI surface."""
     return hashlib.sha256(html.encode("utf-8")).hexdigest()

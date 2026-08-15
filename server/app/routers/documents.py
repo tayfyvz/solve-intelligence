@@ -23,14 +23,13 @@ from app.schemas import (
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
-# SQLite's INTEGER is 64-bit. Without an upper bound, a larger integer passes
-# FastAPI's `int` validation and raises OverflowError inside the driver — a 500
-# where the caller should get a 422. It bounds `offset` for the same reason: it
-# reaches the same driver, as the OFFSET of a query rather than as an id.
+# SQLite's INTEGER is 64-bit. Without an upper bound a larger integer passes FastAPI's
+# `int` validation and raises OverflowError inside the driver — a 500 where the caller
+# should get a 422. It bounds `offset` for the same reason.
 MAX_ID = 2**63 - 1
 
-# Paging bounds. The max is a guard on response size, not a preference: without
-# it, `?limit=1000000` is a denial-of-service button.
+# The max is a guard on response size, not a preference: without it `?limit=1000000` is
+# a denial-of-service button.
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 100
 
@@ -63,10 +62,10 @@ def _version_or_404(db: Session, document_id: int, version_number: int) -> Docum
 
 
 def _clean_or_413(raw: str, settings: Settings) -> str:
-    """The one gate every write passes through, so a fourth write route cannot
-    forget it."""
-    # Bytes, not characters: a 1M-character document is ~3 MB on the wire. The
-    # check runs before sanitising, because nh3 on a 50 MB string is free CPU.
+    """The one gate every write passes through, so a fourth write route cannot forget
+    it."""
+    # Bytes, not characters: a 1M-character document is ~3 MB on the wire. Checked before
+    # sanitising, because nh3 on a 50 MB string is free CPU.
     size = len(raw.encode("utf-8"))
     cap = settings.max_content_bytes
     if size > cap:

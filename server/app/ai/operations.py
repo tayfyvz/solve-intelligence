@@ -9,19 +9,15 @@ One contract, shared by all seven:
   planner emitted does not exist in this document;
 - **model-authored text enters `Block.html` through `escape_text(canonical_text(…))`,
   never through `escape_text` alone.** `parse()` collapses whitespace, so text carrying a
-  trailing newline or a double space would render back into a document the next parse
-  reads differently — and VF-E3 would throw the whole plan away for it;
+  trailing newline would render into a document the next parse reads differently, and the
+  verifier would throw the whole plan away for it;
 - an operation never receives the `ApplyCtx`. Where one needs shared apply-time state,
-  the adapter in `OPS` passes that *field* explicitly. Handing over the whole context
-  would let any operation reach any field, which is exactly the coupling that makes
-  "what can this function touch?" unanswerable in a pairing round.
+  the adapter in `OPS` passes that *field* explicitly, so "what can this function touch?"
+  stays answerable.
 
-`requested` is the claim number exactly as the planner emitted it, and it is used only
-in warning text — never for lookup. That separation is what lets a warning name the
-number the user typed while the code addresses the claim it resolved to.
-
-Imports neither `openai` nor `langgraph`; `Op` is imported under TYPE_CHECKING only, so
-there is no runtime dependency on `schemas.py` either (CLAUDE.md invariant 1, test T5).
+`requested` is the claim number exactly as the planner emitted it, and it is used only in
+warning text, never for lookup — which is what lets a warning name the number the user
+typed while the code addresses the claim it resolved to.
 """
 
 from __future__ import annotations
@@ -51,8 +47,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 MARK_WORDS = {"strong": "bold", "em": "italic", "s": "struck through"}
 
-# The whole warning vocabulary, in one block, so that a live "what does the user
-# actually see?" question has a one-screen answer.
+# The whole warning vocabulary in one block, so "what does the user actually see?" has a
+# one-screen answer.
 W_NO_CLAIM = "There is no claim {requested} in this document."
 W_ALREADY_DELETED = "Claim {requested} was already deleted."
 W_ALREADY_MARKED = "Claim {number} is already {word}."
@@ -244,17 +240,16 @@ def insert_section(
     if not blocks:
         return
 
-    # C9: without this, a Background reading "1. Field of the Invention" / "2. Description
-    # of Related Art" satisfies the >=2 fallback on the NEXT parse and becomes the claims
+    # Without this, a Background reading "1. Field of the Invention" / "2. Description of
+    # Related Art" satisfies the >=2 fallback on the NEXT parse and becomes the claims
     # region — the exact bug the three-region model exists to prevent.
     if doc.claims_heading is None:
         doc.claims_heading = Block("h1", "Claims")
 
     # Both directions APPEND in request order, matching insert_claim's chaining rule:
-    # "add Description" then "add Details" must produce Description, Details — not the
-    # reverse. An earlier version prepended after_claims inserts (most-recent-first),
-    # which silently contradicted "add a section at the end of the document" the second
-    # time it was asked, with no way to fix the order short of deleting and starting over.
+    # "add Description" then "add Details" produces Description, Details. Prepending
+    # after_claims inserts silently contradicted "add a section at the end" the second
+    # time it was asked, with no way to fix the order short of starting over.
     if position == "after_claims":
         doc.postamble.extend(blocks)
     else:
@@ -266,10 +261,9 @@ def delete_section(doc: ParsedDocument, heading: str, warnings: list[str]) -> No
     heading — from the preamble or the postamble.
 
     Matched by HEADING TEXT ONLY, never by body text: the planner is never shown a
-    section's body on this path (same reason insert_section addresses a section by
-    heading rather than by content). The claims region cannot be reached this way even
+    section's body on this path. The claims region cannot be reached this way even
     accidentally — it lives in `doc.claims_heading`, its own field, never in
-    `doc.preamble` or `doc.postamble`, which are the only two lists this searches.
+    `doc.preamble` or `doc.postamble`, the only two lists this searches.
     """
     target = collapse_text(heading).strip().casefold()
     if target:
@@ -289,8 +283,8 @@ def replace_text(doc: ParsedDocument, find: str, replace: str, warnings: list[st
     """Literal, case-sensitive, document-wide find and replace. No regex — the model
     does not get a regex engine.
 
-    Claim numbers are structurally immune, because they are not in any Block.html. That
-    is the payoff of "the number is a field", and O4 is the test.
+    Claim numbers are structurally immune because they are not in any Block.html. That
+    is the payoff of "the number is a field".
     """
     if not find:
         warnings.append(W_EMPTY_FIND)
@@ -397,10 +391,9 @@ def _do_replace_text(doc: ParsedDocument, op: Op, ctx: ApplyCtx, warnings: list[
     replace_text(doc, op.find, op.replace, warnings)
 
 
-# Adding an operation is one function, one adapter, one dict entry and one prompt line —
-# not edits in four places. OPS must be TOTAL over OpKind: apply_plan dispatches with
-# OPS[op.kind] on a Pydantic-validated Literal, so a kind with no row here is a KeyError
-# at request time, i.e. a 500 on a well-formed request. P9 asserts the equality.
+# Adding an operation is one function, one adapter, one dict entry and one prompt line.
+# OPS must be TOTAL over OpKind: `apply_plan` dispatches with `OPS[op.kind]` on a
+# validated Literal, so a kind with no row here is a 500 on a well-formed request.
 OPS: dict[str, OpFn] = {
     "format_claim": _do_format_claim,
     "delete_claim": _do_delete_claim,
