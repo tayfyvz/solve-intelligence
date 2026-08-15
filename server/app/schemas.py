@@ -241,7 +241,7 @@ class AiProposal(BaseModel):
 class AiChatRequest(BaseModel):
     document_id: int
     version_number: int
-    html: str  # editor.getHTML() — NEVER the stored version content (PLAN §23.9)
+    html: str  # editor.getHTML() — NEVER the stored version content
     instruction: str
     context_text: str | None = None
     # The uploaded file's NAME. It is context for `understand` only ("the user attached

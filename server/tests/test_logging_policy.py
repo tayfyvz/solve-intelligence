@@ -1,4 +1,4 @@
-"""L8-L10 — the logging policy of PLAN §28.2.5, asserted rather than promised.
+"""L8-L10 — the logging policy, asserted rather than promised.
 
 **The document being processed is a customer's unpublished patent application. A log
 line is a disclosure.** The rule, stated once in the plan and enforced here:

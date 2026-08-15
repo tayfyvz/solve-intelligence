@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it } from "vitest";
 
-import Modal from "../components/Modal";
+import Modal from "../components/ui/Modal";
 
 /**
  * A trigger, a control behind the backdrop, and a dialog with two stops. The

@@ -2,8 +2,8 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import PatentTree, { type PatentTreeProps } from "../components/PatentTree";
-import { relativeTime } from "../components/time";
+import PatentTree, { type PatentTreeProps } from "../features/patents/PatentTree";
+import { relativeTime } from "../utils/time";
 
 /**
  * PatentTree is props-only, so it is testable without the store. These tests

@@ -8,7 +8,7 @@ mutates `state["doc"]`. The order the nodes run in, and the edges between them, 
 This module imports neither the OpenAI SDK nor LangGraph, so T5's glob covers it and every
 node is testable with a fake bundle, no network and no key. That is also why
 `LlmUnavailable` is defined in `schemas.py` rather than in `llm.py`: `node_guard` has to
-catch it, and importing `llm.py` would pull `openai` in here (PLAN §22 correction 10).
+catch it, and importing `llm.py` would pull `openai` in here.
 """
 
 from __future__ import annotations
@@ -121,7 +121,7 @@ class LlmBundle:
 def _node_log(name: str, state: dict, started: float, **fields: object) -> None:
     """One INFO line per node, keyword-shaped so a later grep is one command.
 
-    THE RULE (PLAN §28.2.5), enforced by what this function is only ever passed:
+    THE RULE, enforced by what this function is only ever passed:
     counts, lengths, kinds, enum values and truncated hashes. Never the document,
     never the instruction, never the prompt, never the model's prose — including
     the model's own `reason` and `restatement`, which quote the text they describe.

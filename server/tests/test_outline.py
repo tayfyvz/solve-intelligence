@@ -51,7 +51,7 @@ def test_build_outline_does_not_truncate_when_it_fits() -> None:
 def test_build_outline_applies_every_truncation_tier() -> None:
     """T8 — the full ladder on a document no seed can reach.
 
-    NOTE: the cap here is 1_600, not PLAN §15's 1_200. Tier 4 keeps ten claim lines at
+    NOTE: the cap here is 1_600, not the 1_200 originally planned. Tier 4 keeps ten claim lines at
     each end plus the omitted-range line, and at tier 3's 60-character limit each of
     those costs ~67 characters, so the SHORTEST outline this document can produce is
     1_525 characters. `max_chars=1_200` is unreachable by construction. The plan says as
@@ -107,7 +107,7 @@ def test_build_context_hard_cuts_a_pathological_document() -> None:
     """T10 — tier 5, the only tier that is a guarantee.
 
     NOTE: reaching tier 5 needs a claim with many paragraphs, not one enormous one.
-    PLAN §15.6's "200 KB single-claim document" is bounded by tier 4 (which caps the
+    The "200 KB single-claim document" case is bounded by tier 4 (which caps the
     first block at 600 characters) and never reaches the hard cut, so it cannot assert
     the tail. Both shapes are asserted here -- the bound holds either way.
     """
@@ -134,7 +134,7 @@ def test_build_context_hard_cuts_a_pathological_document() -> None:
 
 def test_claims_excerpt_selects_and_never_truncates() -> None:
     """The view every generating node reads. Truncating the text a node is about to
-    rewrite is the defect the live pre-flight found (PLAN §20.7 failure A)."""
+    rewrite is the defect the live pre-flight found."""
     doc = parse(SEED_1)
     out = claims_excerpt(doc, [5, 2])
     assert out.splitlines()[0] == "RELEVANT CLAIMS, IN FULL"

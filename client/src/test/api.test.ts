@@ -37,7 +37,7 @@ const {
   renameVersion,
   toMessage,
   updateVersion,
-} = await import("../api");
+} = await import("../services/api");
 
 /** A real AxiosError, so `axios.isAxiosError` and the `.response` shape are genuine. */
 function axiosError(

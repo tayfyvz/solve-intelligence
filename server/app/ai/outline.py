@@ -69,7 +69,7 @@ def _reads_as_heading(block: Block) -> bool:
     """A plain paragraph shaped like a hand-typed section header rather than prose.
 
     This exists because a user who types a new section by hand rarely reaches for the
-    editor's H1/H2/H3 toolbar buttons (`client/src/components/Toolbar.tsx`) — they select
+    editor's H1/H2/H3 toolbar buttons (`client/src/features/editor/Toolbar.tsx`) — they select
     a short line and press Cmd+B to make it stand out, which parses as an ordinary `<p>`
     with a whole-block bold mark, not a heading tag. `document.py`'s claims-region
     absorption (parse(), ~line 439) then folds that paragraph and whatever follows it into

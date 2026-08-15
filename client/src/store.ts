@@ -1,9 +1,7 @@
 import type { Editor } from "@tiptap/core";
 import { create } from "zustand";
 
-// The three write helpers are aliased because the store action that wraps each
-// one has the same name; unaliased, `createDocument(...)` inside `createDocument`
-// reads like recursion.
+// Aliased because each wrapping store action has the same name.
 import {
   createDocument as apiCreateDocument,
   createVersion,
@@ -16,7 +14,7 @@ import {
   renameVersion as apiRenameVersion,
   toMessage,
   updateVersion,
-} from "./api";
+} from "./services/api";
 import type { DocumentDetail, DocumentSummary, Page, VersionRead, VersionSummary } from "./types";
 
 /** The server's own default. Held in state as well, because the server echoes it. */
@@ -32,17 +30,14 @@ export type PendingAction =
   | "deleteVersion";
 
 /**
- * Shared state only: something is here because two or more components need it.
- * `editor` is the reason the store exists at all — ChatPanel must apply AI output
- * to the very instance Editor owns, and they are siblings.
+ * Shared state only: a value lives here because two or more components need it. `editor` is
+ * the reason the store exists — ChatPanel must apply AI output to the instance Editor owns,
+ * and they are siblings.
  *
- * Deliberately local instead: chat messages, chat input, the attached file and
- * the drag state (ChatPanel), the pending selection behind the dirty dialog
- * (App), and the text sitting in a rename/create input before it is submitted.
+ * Deliberately local instead: chat messages, input and attached file (ChatPanel), the pending
+ * selection behind the dirty dialog (App), and text in a rename input before it is submitted.
  */
 interface DocumentState {
-  // The patent list, one page of it. `total`/`offset` are here because the list
-  // and its pager are separate components.
   documents: DocumentSummary[];
   documentsTotal: number;
   documentsOffset: number;
@@ -51,13 +46,11 @@ interface DocumentState {
   documentId: number | null;
   title: string;
 
-  // The open patent's version list, newest first. Accumulated, not paged: page 1
-  // plus every page `loadMoreVersions` has appended. `versionsTotal` is how the
-  // UI knows more remain — `versions.length < versionsTotal` — so no selector
-  // helper and no second flag to keep in sync.
+  /** The open patent's versions, newest first. Accumulated, not paged: `versions.length <
+   *  versionsTotal` is how the UI knows more remain, so there is no second flag to sync. */
   versions: VersionSummary[];
   versionsTotal: number;
-  /** Offset of the most recent version-list fetch; the staleness guard, not a page number. */
+  /** Offset of the most recent fetch; the staleness guard, not a page number. */
   versionsOffset: number;
   versionsLimit: number;
 
@@ -65,29 +58,20 @@ interface DocumentState {
   versionName: string;
 
   /**
-   * Why `versionNumber` last changed. Written in the SAME set() as versionNumber
-   * itself, so it can never disagree with it, and overwritten by EVERY subsequent
-   * change, so it can never get stuck. Nothing subscribes to it — ChatPanel reads it
-   * once, with getState(), inside the effect that observes the change, to tell "the
-   * user moved" (clear the transcript) from "we moved, because the user accepted an
-   * AI edit" (keep it).
+   * Why `versionNumber` last changed. Written in the same set() as `versionNumber`, so it can
+   * never disagree with it, and overwritten by every later change, so it cannot get stuck.
+   * ChatPanel reads it once with getState() to tell "the user moved" (clear the transcript)
+   * from "we moved, because the user accepted an AI edit" (keep it).
    *
-   * The one deliberate exception to the shared-state rule, justified by ATOMICITY,
-   * not sharing: it is a property of a store *transition*, and recording it anywhere
-   * else records it at a different moment — which is the bug, not the design.
-   * A failed save never reaches the set(), so it cannot leave "ai" behind.
+   * The one exception to the shared-state rule, justified by atomicity rather than sharing:
+   * it describes a store *transition*, and recording it elsewhere records it at a different
+   * moment — which is the bug, not the design.
    */
   versionSource: "user" | "ai" | null;
 
-  /**
-   * Who created the CURRENTLY OPEN version, per the server's stored `source` field —
-   * ordinary shared data, kept in sync with `versionNumber` exactly like `versionName`
-   * and `content` are. Not the same field as `versionSource` above: that one is a
-   * transition marker read once by ChatPanel; this one is a persisted fact about the
-   * open version that survives navigation and reload. ChatPanel derives its consent
-   * gate from this field, so an AI-created version stays pre-consented across a
-   * refresh instead of resetting every session.
-   */
+  /** Who created the currently open version, per the server's stored `source`. Ordinary shared
+   *  data, kept in step with `versionNumber` like `versionName` is — unlike `versionSource`
+   *  above, it survives reload, which is what keeps an AI version pre-consented. */
   versionOrigin: "user" | "ai";
 
   /** May legitimately be "" — an emptied draft. Never test truthiness. */
@@ -110,19 +94,14 @@ interface DocumentState {
   createDocument(title: string, content?: string): Promise<boolean>;
   renameDocument(id: number, title: string): Promise<boolean>;
   renameVersion(n: number, name: string): Promise<boolean>;
-  /**
-   * Refused server-side (409) when `n` is a document's only version — the UI
-   * never lets the user reach that click (see PatentTree), but the store still
-   * has to report it rather than assume.
-   */
+  /** Refused server-side (409) on a document's only version. The UI never lets the user reach
+   *  that click, but the store still reports it rather than assuming. */
   deleteVersion(n: number): Promise<boolean>;
   save(): Promise<boolean>;
   /**
-   * `name` is threaded straight through to the existing `createVersion(…, name)`, so
-   * the version list reads `AI: delete claim 3` instead of `Version 4`.
-   * `options.content` is the explicit HTML to save, defaulting to the live buffer, so
-   * keystrokes made between an AI apply and this POST are not silently folded into
-   * the AI's version. Every existing caller omits both and behaves exactly as before.
+   * `name` reaches `createVersion`, so the list reads "AI: delete claim 3", not "Version 4".
+   * `options.content` is the exact HTML to save, defaulting to the live buffer, so keystrokes
+   * made between an AI apply and this POST are not folded into the AI's version.
    */
   saveAsNewVersion(
     name?: string,
@@ -134,21 +113,12 @@ interface DocumentState {
   clearError(): void;
 }
 
-/**
- * Request ordering, one concept rather than a rule per action.
- *
- * The token lives at module scope: nothing renders it (in state it would
- * re-render every subscriber per request), and it must survive the editor's
- * `key` remount while staying readable from store actions, so not a ref either.
- */
+/** Request ordering, one concept rather than a rule per action. Module scope: nothing renders
+ *  it, and it must survive the editor's `key` remount while staying readable from actions. */
 let token = 0;
 
-/**
- * "Show more versions" is one button the user can double-click, and both clicks
- * compute the same offset — so the echoed-offset guard cannot tell them apart.
- * Module scope for the same reasons as `token`: nothing renders it (`listLoading`
- * is what the button reads), and it must not re-render every subscriber.
- */
+/** "Show more versions" is one button the user can double-click, and both clicks compute the
+ *  same offset — so the echoed-offset guard alone cannot tell them apart. */
 let appending = false;
 
 /** Selection actions *begin*: they change what the user is looking at. */
@@ -157,22 +127,17 @@ function beginRequest(): () => boolean {
   return () => mine === token;
 }
 
-/**
- * Everything else *captures*: a request that resolves after the user switched
- * away is discarded. For a save that means it cannot clear the new editor's
- * dirty flag; for a list page it means a selection started later wins, which is
- * right — `selectDocument` loads its own first page of versions.
- */
+/** Everything else *captures*: a request resolving after the user switched away is discarded.
+ *  For a save that means it cannot clear the new editor's dirty flag. */
 function captureRequest(): () => boolean {
   const mine = token;
   return () => mine === token;
 }
 
 /**
- * `api.ts` casts the response body to its declared type; a proxy, a stale deploy
- * or a 200 from the wrong route can still hand back another shape. Without these
- * checks a missing `content` would set `content: null` and leave the user staring
- * at a blank pane with no loading state and no error — a silent failure.
+ * `api.ts` casts the response body to its declared type; a proxy or a stale deploy can still
+ * hand back another shape. Unchecked, a missing `content` leaves the user staring at a blank
+ * pane with no error — a silent failure.
  */
 function checkedContent(version: VersionRead): string {
   if (typeof version.content !== "string") {
@@ -188,10 +153,7 @@ function checkedLatest(detail: DocumentDetail): number {
   return detail.latest_version_number;
 }
 
-/**
- * The whole envelope, not just `items`: a missing `total` would render a pager
- * showing "Page 1 of NaN", which is a silent failure of a different colour.
- */
+/** The whole envelope, not just `items`: a missing `total` renders a pager as "Page 1 of NaN". */
 function checkedPage<T>(page: Page<T>, what: string): Page<T> {
   const ok =
     page !== null &&
@@ -205,11 +167,9 @@ function checkedPage<T>(page: Page<T>, what: string): Page<T> {
 }
 
 /**
- * Appending is not concatenation. A version created between two fetches shifts
- * every row down one, so the next page overlaps what we already hold; so does a
- * double-click that slips past the in-flight guard. Merging by `version_number`
- * makes a duplicate impossible rather than unlikely, and the explicit sort keeps
- * the list newest-first even if a page arrives out of order.
+ * Appending is not concatenation: a version created between two fetches shifts every row down
+ * one, so the next page overlaps what we hold. Merging by `version_number` makes a duplicate
+ * impossible, and the sort keeps the list newest-first if a page arrives out of order.
  */
 function mergeVersions(held: VersionSummary[], incoming: VersionSummary[]): VersionSummary[] {
   const byNumber = new Map(held.map((v) => [v.version_number, v]));
@@ -255,32 +215,30 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   async loadDocuments(offset = 0) {
     const isCurrent = captureRequest();
-    // Optimistic: the pager highlights the page the user clicked immediately,
-    // and the offset it holds is what tells a late response it is stale.
+    // Optimistic: the pager highlights the clicked page at once, and the offset it holds is
+    // what tells a late response it is stale.
     set({ listLoading: true, documentsOffset: offset, error: null });
     try {
       const page = checkedPage(await listDocuments(get().documentsLimit, offset), "patents");
-      // Two guards, one meaning: this response is no longer what is on screen.
       if (!isCurrent() || get().documentsOffset !== offset) return;
       set({
         documents: page.items,
         documentsTotal: page.total,
         documentsLimit: page.limit,
       });
-      // Without this the first paint is an empty editor column. Only ever on the
-      // first page load — once a patent is open, changing pages must not move it.
+      // Otherwise the first paint is an empty editor column. Only on the first load — once a
+      // patent is open, changing pages must not move it.
       if (page.items.length && get().documentId === null) {
         await get().selectDocument(page.items[0].id);
       }
     } catch (error) {
-      // Guarded in the catch too: otherwise aborting a load that happens to 404
-      // paints "not found" over the document you successfully switched to.
+      // Guarded in the catch too: an aborted load that happens to 404 would otherwise paint
+      // "not found" over the document you successfully switched to.
       if (!isCurrent()) return;
       set({ error: toMessage(error) });
     } finally {
-      // Every exit path, the stale returns included: nothing later clears it, and
-      // a stuck `listLoading` disables the pager and "Show more" for the rest of
-      // the session. Last writer wins, exactly as in `save`.
+      // Every exit path, stale returns included: a stuck `listLoading` disables the pager and
+      // "Show more" for the rest of the session.
       set({ listLoading: false });
     }
   },
@@ -294,8 +252,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     try {
       const page = checkedPage(await listVersions(id, get().versionsLimit, offset), "versions");
       if (!isCurrent() || get().versionsOffset !== offset) return;
-      // Note what is *not* set: the open version, its content and `dirty`. Loading
-      // the list is not a selection — the editor keeps whatever it is holding.
+      // Note what is not set: the open version, its content and `dirty`. Loading the list is
+      // not a selection — the editor keeps whatever it holds.
       set({
         versions: page.items,
         versionsTotal: page.total,
@@ -305,14 +263,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       if (!isCurrent()) return;
       set({ error: toMessage(error) });
     } finally {
-      set({ listLoading: false }); // see `loadDocuments`
+      set({ listLoading: false });
     }
   },
 
   /** "Show more versions": fetches the page after what we hold and appends it. */
   async loadMoreVersions() {
     const { documentId: id, versions, versionsTotal } = get();
-    // Nothing open, a fetch already running, or the whole list is already here.
     if (id === null || appending || versions.length >= versionsTotal) return;
     const offset = versions.length;
     const isCurrent = captureRequest();
@@ -321,9 +278,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     try {
       const page = checkedPage(await listVersions(id, get().versionsLimit, offset), "versions");
       if (!isCurrent() || get().versionsOffset !== offset) return;
-      // `get().versions`, not the destructured copy: whatever is held *now* is
-      // what this page appends to. Same one-writer rule as `loadVersions` — the
-      // editor, its content and `dirty` are none of this action's business.
+      // `get().versions`, not the destructured copy: whatever is held now is what this page
+      // appends to.
       set({
         versions: mergeVersions(get().versions, page.items),
         versionsTotal: page.total,
@@ -331,12 +287,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       });
     } catch (error) {
       if (!isCurrent()) return;
-      // The list the user is looking at stays exactly as it was; only the error
-      // appears, so a failed "show more" costs nothing but the click.
+      // The list stays exactly as it was; only the error appears.
       set({ error: toMessage(error) });
     } finally {
       appending = false;
-      set({ listLoading: false }); // see `loadDocuments`
+      set({ listLoading: false });
     }
   },
 
@@ -347,16 +302,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       const detail = await getDocument(id);
       if (!isCurrent()) return;
       if (!detail.version_count) {
-        // Cannot happen against this server, but asking for version 0 would
-        // surface as "Version 0 was not found", which reads as a bug.
+        // Unreachable against this server, but asking for version 0 would surface as
+        // "Version 0 was not found", which reads as a bug.
         set({ loading: false, dirty: false, error: `"${detail.title}" has no saved versions.` });
         return;
       }
-      // Read before the Promise.all: a throw *inside* the array would leave the
-      // other request dangling as an unhandled rejection.
+      // Read before the Promise.all: a throw inside the array leaves the other request
+      // dangling as an unhandled rejection.
       const latest = checkedLatest(detail);
-      // The server tells us which version is newest; the list is only what the
-      // picker shows, so the two requests are independent and go together.
       const [page, version] = await Promise.all([
         listVersions(id, get().versionsLimit, 0),
         getVersion(id, latest),
@@ -380,12 +333,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       });
     } catch (error) {
       if (!isCurrent()) return;
-      // `dirty` is deliberately NOT cleared. The editor stays MOUNTED while
-      // loading (App only dims it), and on this path `documentId`/`versionNumber`
-      // never moved — so the remount key never changed and the user's edited text
-      // is still on screen. Clearing the flag would drop the badge, the
-      // `beforeunload` guard and the dialog on the next switch, over text that is
-      // still there and still unsaved.
+      // `dirty` is deliberately not cleared: the editor stays mounted while loading and the
+      // remount key never moved, so the user's edited text is still on screen. Clearing the
+      // flag would drop the badge, the unload guard and the next dirty dialog over live text.
       set({ loading: false, error: toMessage(error) });
     }
   },
@@ -409,17 +359,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       });
     } catch (error) {
       if (!isCurrent()) return;
-      // See `selectDocument`: a failed switch changes nothing on screen, so the
-      // unsaved edits are still there and `dirty` must stay set.
+      // See `selectDocument`: a failed switch changes nothing on screen, so `dirty` stays.
       set({ loading: false, error: toMessage(error) });
     }
   },
 
-  /**
-   * Creates the patent and opens it — which discards unsaved edits in whatever
-   * was open, exactly like clicking another patent, so the UI must put this
-   * behind the same dirty guard.
-   */
+  /** Creates the patent and opens it — which discards unsaved edits in whatever was open, so
+   *  the UI must put this behind the same dirty guard as switching patents. */
   async createDocument(title, content) {
     const trimmed = title.trim();
     if (!trimmed) {
@@ -432,15 +378,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       const created = await apiCreateDocument(trimmed, content ?? null);
       if (!isCurrent()) return false;
       await get().selectDocument(created.id);
-      // The list is ordered by title, so the new patent may have landed on any
-      // page; refreshing the page being shown is the honest, cheap answer, and
-      // `total` has to be re-read regardless or the pager under-counts.
+      // The list is title-ordered, so the new patent may have landed on any page; `total` has
+      // to be re-read regardless or the pager under-counts.
       await get().loadDocuments(get().documentsOffset);
       return true;
     } catch (error) {
       if (!isCurrent()) return false;
-      // A duplicate title is a 409 whose detail is already a readable sentence
-      // ("A patent called \"Widget\" already exists."). Surface it verbatim.
+      // A duplicate title 409s with a readable sentence already. Surface it verbatim.
       set({ error: toMessage(error) });
       return false;
     } finally {
@@ -459,11 +403,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     try {
       const updated = await apiRenameDocument(id, trimmed);
       if (!isCurrent()) return false;
-      // The header shows the open patent's title; if that is the one that moved,
-      // it has to change with it.
+      // The header shows the open patent's title.
       if (get().documentId === updated.id) set({ title: updated.title });
-      // A title change reorders the (title-ordered) list and can move the row to
-      // another page, so refetch rather than patching the row in place.
+      // A title change reorders the list and can move the row to another page, so refetch
+      // rather than patching in place.
       await get().loadDocuments(get().documentsOffset);
       return true;
     } catch (error) {
@@ -475,11 +418,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
   },
 
-  /**
-   * Renames a version of the open patent. Unlike patents, the version list is
-   * ordered by number, so a rename cannot reorder or re-page it — patching the
-   * row we hold is correct and avoids a refetch flicker.
-   */
+  /** Version lists are ordered by number, so a rename cannot reorder or re-page them —
+   *  patching the row we hold is correct and avoids a refetch flicker. */
   async renameVersion(n, name) {
     const id = get().documentId;
     if (id === null) {
@@ -500,9 +440,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         versions: get().versions.map((v) =>
           v.version_number === updated.version_number ? { ...v, name: updated.name } : v,
         ),
-        // Renaming the version you are looking at must change what the bar says.
-        // Nothing else moves: PATCH never touches content, so `dirty` and the
-        // editor are none of this action's business.
+        // Renaming the open version must change what the bar says. Nothing else moves: PATCH
+        // never touches content, so `dirty` and the editor are not this action's business.
         ...(get().versionNumber === updated.version_number
           ? { versionName: nameOf(updated) }
           : null),
@@ -517,14 +456,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
   },
 
-  /**
-   * Deletes one version of the open patent. `captureRequest`, like every other
-   * write here — but when the deleted version is the one open in the editor,
-   * it hands off to `selectDocument`, which picks the newest survivor exactly
-   * the way the app already picks a version the first time a patent opens.
-   * That inner call owns its own token bump; this action's job ends once it
-   * has kicked it off.
-   */
+  /** When the deleted version is the open one, this hands off to `selectDocument`, which picks
+   *  the newest survivor the same way a first load picks a version. */
   async deleteVersion(n) {
     const id = get().documentId;
     if (id === null) {
@@ -540,15 +473,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       set({
         versions: get().versions.filter((v) => v.version_number !== n),
         versionsTotal: get().versionsTotal - 1,
-        // The patent row shows a version count too; without this it keeps
-        // saying the old total next to a list that now shows one fewer.
+        // The patent row shows a version count; without this it keeps the old total.
         documents: get().documents.map((d) =>
           d.id === id ? { ...d, version_count: d.version_count - 1 } : d,
         ),
       });
-      // The deleted version's content is gone; there is nothing left on screen
-      // to call dirty. Re-opening the patent is exactly what a first load does
-      // — it asks the server which version is newest now and opens that one.
+      // The deleted content is gone, so there is nothing left on screen to call dirty.
       if (wasOpen) await get().selectDocument(id);
       return true;
     } catch (error) {
@@ -569,27 +499,23 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const isCurrent = captureRequest();
     set({ saving: true, pendingAction: "save", error: null });
     try {
-      // Captured BEFORE the request, exactly as ChatPanel does around the AI
-      // round-trip: these are the bytes the server now holds, and the reference
-      // point for the drift check below.
+      // Captured before the request: these are the bytes the server now holds, and the
+      // reference point for the drift check below.
       const sent = editor.getHTML();
       // Updates version `n` in place — it must never create a version.
       const saved = await updateVersion(documentId, versionNumber, sent);
-      // Stale: the user has moved on, so dirty and content stay untouched.
       if (!isCurrent()) return false;
       set({
-        // The picker shows the last-saved time; without this it stays at
-        // whatever it was when the document was loaded. Nothing reorders and no
-        // row appears, so there is nothing to refetch.
+        // The picker shows the last-saved time. Nothing reorders, so there is nothing to
+        // refetch.
         versions: get().versions.map((v) =>
           v.version_number === saved.version_number
             ? { ...v, updated_at: saved.updated_at }
             : v,
         ),
-        // THE DRIFT GUARD, same rule as ChatPanel's. Keystrokes typed while the
-        // PUT was in flight are NOT on the server; clearing `dirty` over them
-        // would drop the badge, the `beforeunload` guard and the dirty dialog, and
-        // the next version switch would discard them without a word.
+        // The drift guard, same rule as ChatPanel's: keystrokes typed while the PUT was in
+        // flight are not on the server, and clearing `dirty` over them would let the next
+        // version switch discard them without a word.
         ...(editor.getHTML() === sent ? { dirty: false } : null),
       });
       return true;
@@ -598,10 +524,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       set({ error: toMessage(error) });
       return false;
     } finally {
-      // Every exit path, including the two stale ones — no later request exists
-      // to clear it, and a stuck `saving` disables Save for the rest of the
-      // session. Last writer wins if two saves somehow overlap; the UI only
-      // allows one, and re-enabling early beats locking the user out.
+      // Every exit path, including the stale ones: a stuck `saving` disables Save for the
+      // rest of the session.
       set({ saving: false, pendingAction: null });
     }
   },
@@ -615,8 +539,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const isCurrent = captureRequest();
     set({ saving: true, pendingAction: "saveAsNew", error: null });
     try {
-      // The live buffer as it was when the request left, for the drift check
-      // below. NOT the same as what is sent: ChatPanel passes explicit content.
+      // The live buffer as it was when the request left, for the drift check below. Not
+      // necessarily what is sent: ChatPanel passes explicit content.
       const sent = editor.getHTML();
       const created = await createVersion(
         documentId,
@@ -624,46 +548,34 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         name ?? null,
         options?.source ?? "user",
       );
-      // NOTE: a discarded write returns here, so `versionSource` is untouched — the
-      // reason a failed or superseded save can never leave "ai" behind.
+      // A discarded write returns here, leaving `versionSource` untouched — which is why a
+      // failed or superseded save can never leave "ai" behind.
       if (!isCurrent()) return false;
-      // The new version has the highest number and the list is newest-first, so
-      // it belongs at the top. Resetting to page 1 is one rule; splicing it into
-      // an accumulated list whose offsets have all just shifted by one is
-      // several, all wrong somewhere.
-      //
-      // BEFORE the set() below, not after: App commits a held-back selection the
-      // instant `dirty` goes false, and that selection bumps the request token —
-      // which would discard this fetch and leave the new version out of the
-      // sidebar until a full page reload.
+      // Reset to page 1: the new version has the highest number and the list is newest-first.
+      // Splicing it into an accumulated list whose offsets just shifted is several rules, all
+      // wrong somewhere. Before the set() below, because App commits a held-back selection the
+      // instant `dirty` goes false, and that selection would discard this fetch.
       await get().loadVersions(0);
       if (!isCurrent()) return false;
       set({
-        // The patent row shows a version count; without this it keeps saying
-        // "1 version" next to a list that now shows two, until the next reload.
         documents: get().documents.map((d) =>
           d.id === documentId
             ? { ...d, version_count: d.version_count + 1, updated_at: created.updated_at }
             : d,
         ),
-        // THE DRIFT GUARD — the same rule as `save`, and it matters more here:
-        // moving `versionNumber` changes App's remount key, which would rebuild
-        // the editor from the server's echo and destroy the keystrokes outright.
-        // Drifted, the user stays on their version with their text and `dirty`
-        // still set; the created version is in the list, one click away.
+        // The drift guard again, and it matters more here: moving `versionNumber` changes
+        // App's remount key, which would rebuild the editor from the server's echo and destroy
+        // the keystrokes. Drifted, the user keeps their text and the version is one click away.
         ...(editor.getHTML() === sent
           ? {
               versionNumber: created.version_number,
               versionName: nameOf(created),
-              // The Banner's own button defaults to "user"; only ChatPanel passes "ai".
+              // The Banner's button defaults to "user"; only ChatPanel passes "ai".
               versionSource: options?.source ?? "user",
-              // The server's echo, not `options?.source`: this is the persisted fact,
-              // and the two can only ever agree since the server stores exactly what
-              // was sent.
+              // The server's echo, not `options?.source`: this is the persisted fact.
               versionOrigin: created.source,
-              // The server's sanitised echo is the truth after nh3 ran; moving
-              // versionNumber changes the remount key, which rebuilds the editor
-              // from exactly this content.
+              // The sanitised echo is the truth after nh3 ran, and the remount rebuilds the
+              // editor from exactly this content.
               content: checkedContent(created),
               dirty: false,
             }
@@ -675,7 +587,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       set({ error: toMessage(error) });
       return false;
     } finally {
-      // see `save` — one clear for every exit path
       set({ saving: false, pendingAction: null });
     }
   },
@@ -684,22 +595,15 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     set({ editor });
   },
 
-  /**
-   * Identity-guarded: during a key change React can commit the new child's
-   * `onCreate` before the old child's `onDestroy`, and an unguarded clear would
-   * null the *live* editor, silently breaking Save and the chat.
-   */
+  /** Identity-guarded: during a key change React can commit the new child's `onCreate` before
+   *  the old child's `onDestroy`, and an unguarded clear would null the live editor. */
   clearEditor(editor) {
     set((s) => (s.editor === editor ? { editor: null } : {}));
   },
 
-  /**
-   * One writer: `Editor.onUpdate` sets it; the two save actions clear it when
-   * what they saved is still what the editor holds, and the two selection actions
-   * clear it when they succeed. Nothing else may clear it — App commits a
-   * selection held back by the dirty dialog when this goes false. In particular
-   * the list, create and rename actions never touch it.
-   */
+  /** One writer: `Editor.onUpdate` sets it; the two save actions clear it when what they saved
+   *  is still what the editor holds, and the two selection actions clear it on success.
+   *  Nothing else may — App commits a held-back selection when this goes false. */
   setDirty(dirty) {
     set({ dirty });
   },
@@ -709,11 +613,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 }));
 
-/**
- * Zustand stores are module singletons; without this they leak between tests.
- * `setState(initialState)` merges — the documented `(initial, true)` replace form
- * would delete every action along with the state.
- */
+/** Zustand stores are module singletons; without this they leak between tests. `setState`
+ *  merges — the `(initial, true)` replace form would delete every action too. */
 export function __resetStoreForTests(): void {
   token = 0;
   appending = false;

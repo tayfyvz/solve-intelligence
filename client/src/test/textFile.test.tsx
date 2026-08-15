@@ -3,14 +3,14 @@ import { fireEvent, render, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import TxtDropZone from "../components/TxtDropZone";
+import TxtDropZone from "../components/ui/TxtDropZone";
 import {
   readTextFile,
   readDroppedFiles,
   validateTextFile,
   type TextFile,
   type TextFileResult,
-} from "../textFile";
+} from "../utils/textFile";
 
 const txt = (name: string, content: string) => new File([content], name, { type: "text/plain" });
 

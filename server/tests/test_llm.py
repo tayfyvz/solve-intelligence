@@ -164,7 +164,7 @@ def test_parse_omits_temperature_unless_a_caller_asks(temperature: float | None)
 def test_each_wrapper_sends_its_specified_temperature(
     wrapper: str, parsed: object, expected: float | None
 ) -> None:
-    """L6c — PLAN §21.3's table is the spec, and this is the only thing stopping the two
+    """L6c — the per-node temperature table is the spec, and this is the only thing stopping the two
     groups drifting into one.
 
     The three nodes whose output is a DECISION run at 0 so the same instruction resolves
@@ -295,7 +295,7 @@ def test_only_two_modules_import_openai() -> None:
 def test_l11_reasoning_effort_and_a_non_default_temperature_are_never_sent_together() -> None:
     """L11 — the combination gpt-5.2-2025-12-11 rejects.
 
-    MEASURED LIVE 2026-08-14 against the real API (PLAN §27.4 correction 40):
+    MEASURED LIVE 2026-08-14 against the real API:
 
         reasoning_effort="low" + no temperature      -> ACCEPTED
         reasoning_effort="low" + temperature=1.0     -> ACCEPTED

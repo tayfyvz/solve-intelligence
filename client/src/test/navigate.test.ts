@@ -3,7 +3,7 @@ import { DOMParser as PMDOMParser, type Node as PMNode } from "@tiptap/pm/model"
 import StarterKit from "@tiptap/starter-kit";
 import { describe, expect, it } from "vitest";
 
-import { documentOutline, findMatches } from "../ai/navigate";
+import { documentOutline, findMatches } from "../features/editor/navigate";
 import { SEED_1 } from "./seed.fixture";
 
 const schema = getSchema([StarterKit]);

@@ -15,7 +15,7 @@ from pathlib import Path
 from app.main import create_app
 
 CLIENT = Path(__file__).parents[2] / "client/src"
-API_TS = CLIENT / "api.ts"
+API_TS = CLIENT / "services/api.ts"
 TYPES_TS = CLIENT / "types.ts"
 
 # `${id}` in a client URL is `{document_id}` in the OpenAPI path. An explicit map

@@ -86,8 +86,8 @@ the document's HTML. **877 tests pass (620 backend, 257 frontend), and none of t
 key.**
 
 The rest of this section is the reasoning, because the interesting parts of this submission are
-decisions rather than features. `DESIGN.md` covers what and why, `TECHNOLOGY.md` why each tool, and
-`PLAN.md` the order it was built in, with every correction recorded as it was found.
+decisions rather than features. `CLAUDE.md` records the architecture invariants those decisions
+became, and the traps in this codebase that are worth knowing before changing it.
 
 ---
 
@@ -190,8 +190,9 @@ not fit is **named**, inline and in a warning the user reads, in one of three fo
 whether there are sections to name and whether the question matched anything at all. An adversarial
 audit of that mechanism found six defects — a packer that never charged for its own headings, a hard
 cut that severed the very manifest the prompt promised, a paragraph too big to fit being dropped
-rather than clipped — all fixed, each with a test built from its reproduction. `DESIGN.md` §5.6a has
-the detail, including what was rejected (embeddings, a summarisation pass) and why.
+rather than clipped — all fixed, each with a test built from its reproduction. Embeddings, a vector
+store and a summarisation pass were all rejected: the unit of retrieval a patent question wants is a
+named section, and a patent already carries its own headings.
 
 **2. Thirty-seven pages is one continuous 43,262-pixel scroll.** Load is 203 ms and typing is
 0.16 ms/char, so performance was never the problem — navigation was. There is now a **document map**
@@ -344,8 +345,7 @@ coverage number.
   layer rests on. It was written first, and it is what makes a failing operation test mean "the
   operation is wrong" rather than "the parser is wrong".
 - **The four README example instructions are acceptance tests**, and were also walked by hand in a
-  browser against the real API — recorded row by row in `PHASE6-MANUAL.md`, including what that walk
-  found and the rows it did **not** cover.
+  browser against the real API.
 - The AI routes inject a fake graph; the graph tests inject fake LLM callables. Two seams, two
   levels, and neither reaches the network.
 - A contract test asserts the client's TypeScript types still mirror the server's Pydantic models,

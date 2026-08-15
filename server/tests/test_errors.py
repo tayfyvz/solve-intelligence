@@ -48,7 +48,7 @@ def _preflight(client: TestClient, path: str, method: str):
 
 
 def test_cors_is_uncredentialed_and_narrow(client: TestClient) -> None:
-    """PLAN §28.2.3 — ship-blocking. There is no auth, no cookie and no
+    """Ship-blocking. There is no auth, no cookie and no
     Authorization header anywhere in the client, so `allow_credentials=True` bought
     nothing and told browsers to attach ambient credentials cross-origin. A
     preflight is the only place the negotiated policy is observable."""
@@ -95,7 +95,7 @@ def test_a_rename_preflight_is_allowed(client: TestClient, path: str) -> None:
 
 
 def test_the_unhandled_error_log_line_carries_no_exception_message(client, caplog) -> None:
-    """PLAN §28.2.5 — ship-blocking. `logger.exception` renders the traceback, whose
+    """Ship-blocking. `logger.exception` renders the traceback, whose
     last line is str(exc); a ValidationError's message quotes the input that failed,
     and on this server that input is a customer's unpublished patent text. The line
     logs the exception TYPE and the path, and nothing that has been near a document."""

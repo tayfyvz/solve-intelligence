@@ -36,13 +36,13 @@ def test_the_env_example_placeholder_still_reads_as_unconfigured() -> None:
 
 
 def test_a_non_sqlite_url_gets_no_sqlite_only_connect_args(monkeypatch) -> None:
-    """PLAN §28.2.6 item 2 — the ship-blocker behind the portability claim.
+    """The ship-blocker behind the portability claim.
 
     `check_same_thread` is a sqlite3-only connect argument and psycopg raises
     TypeError on it, so passing it unconditionally made "port to Postgres by
     changing the URL" false. StaticPool is scoped inside the same guard.
 
-    PLAN §28.4(a) asked for this as `create_db_engine("postgresql+psycopg://...")`
+    This was first written as `create_db_engine("postgresql+psycopg://...")`
     asserting on the built engine, on the stated grounds that "engine construction
     is lazy; only .connect() dials out". That is only half true and the test does
     not run: create_engine imports the DBAPI module eagerly, and `psycopg` is not a
@@ -50,7 +50,7 @@ def test_a_non_sqlite_url_gets_no_sqlite_only_connect_args(monkeypatch) -> None:
     reaches any of our code. Adding a driver we never use, to a production image,
     to run one test, is the wrong trade. So the kwargs our code computes are
     captured at the seam instead, which is the claim itself: for a non-sqlite URL
-    we pass no sqlite-only arguments. Recorded as PLAN §27.4 correction 33.
+    we pass no sqlite-only arguments.
     """
     seen: dict[str, object] = {}
     real_create_engine = db.create_engine  # bound BEFORE the patch, or _spy calls itself

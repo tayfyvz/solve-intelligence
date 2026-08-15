@@ -17,8 +17,8 @@ import type {
 // One mock for the whole seam; `ApiError`, `toMessage` and `RETRYABLE_STATUSES` stay
 // real, because the panel's error copy and its Retry rule are exactly what is under
 // test here.
-vi.mock("../api", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../api")>()),
+vi.mock("../services/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../services/api")>()),
   aiChat: vi.fn(),
   aiApply: vi.fn(),
   createVersion: vi.fn(),
@@ -29,12 +29,12 @@ vi.mock("../api", async (importOriginal) => ({
 }));
 
 const { ApiError, aiApply, aiChat, createVersion, getVersion, listVersions, updateVersion, renameVersion } =
-  vi.mocked(await import("../api"));
+  vi.mocked(await import("../services/api"));
 const { useDocumentStore } = await import("../store");
-const { highlightKey } = await import("../ai/highlight");
-const { localFormat } = await import("../ai/format");
-const { default: ChatPanel } = await import("../components/chat/ChatPanel");
-const { default: Message } = await import("../components/chat/Message");
+const { highlightKey } = await import("../features/editor/highlight");
+const { localFormat } = await import("../features/chat/format");
+const { default: ChatPanel } = await import("../features/chat/ChatPanel");
+const { default: Message } = await import("../features/chat/Message");
 
 const store = () => useDocumentStore.getState();
 const STAMP = "2026-01-01T09:30:00";
@@ -416,11 +416,9 @@ describe("CP-07 a superseded version save says nothing", () => {
   // The discriminator is `error`, not the version number: a genuine failure must
   // never be swallowed as "the user moved on".
   //
-  // §26.7's companion case — a genuine failure *while* the user navigates — cannot be
-  // written, and that is a fact about the shipped store, not about this test: its
-  // catch is `if (!isCurrent()) return false` BEFORE it writes `error`, so a rejection
-  // that lands after a navigation leaves `error` null and is silent by construction
-  // (§26.12 row 32). This asserts the half that exists.
+  // The companion case — a genuine failure *while* the user navigates — cannot be written,
+  // and that is a fact about the shipped store: its catch returns on `!isCurrent()` before
+  // writing `error`, so such a rejection is silent by construction.
   it("speaks when the save genuinely failed", async () => {
     const editor = fakeEditor();
     open(editor);
@@ -1184,8 +1182,8 @@ describe("CP-28 saving a new version during an AI call leaves a sentence, not si
   });
 });
 
-// CP-29. The pure half of CP-26. When §26.5's table is extended, it is extended here.
-describe("CP-29 localFormat matches exactly the §26.5 table", () => {
+// The pure half of the format fast-path: every pattern `localFormat` claims to match.
+describe("CP-29 localFormat matches exactly the documented table", () => {
   const table: [string, { mark: string; on: boolean } | null][] = [
     ["Make the selected text italic", { mark: "italic", on: true }],
     ["make this bold", { mark: "bold", on: true }],
@@ -1244,8 +1242,8 @@ describe("CP-30 the fast-path's three negatives", () => {
   });
 });
 
-// CP-31. §1.5 row 28 chose complete instructions over {id, label} precisely so this
-// is testable without server state; this is the payoff.
+// Clarification options are complete instructions rather than {id, label}, precisely so
+// this is testable without server state.
 it("CP-31 clarification options send verbatim and disable while sending", async () => {
   const options = ["Make claim 1 bold.", "Make claim 2 bold.", "Make claim 3 bold."];
   const editor = fakeEditor();
@@ -1283,10 +1281,9 @@ it("CP-31 clarification options send verbatim and disable while sending", async 
   expect(second.pending_question).toBe("Which claim did you mean?");
   expect(second.clarify_count).toBe(1);
 
-  // Sending appends the user's own bubble, so the option bubble is no longer the
-  // last message and its buttons are gone entirely — a stricter outcome than
-  // disabled, and the reason the disabled-while-sending half is asserted against
-  // `Message` directly below (§26.12 correction 30).
+  // Sending appends the user's own bubble, so the option bubble is no longer last and its
+  // buttons are gone entirely — stricter than disabled, which is why the
+  // disabled-while-sending half is asserted against `Message` directly below.
   expect(screen.queryByRole("button", { name: options[2] })).toBeNull();
 
   await act(async () => {

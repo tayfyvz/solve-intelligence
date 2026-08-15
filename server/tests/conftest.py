@@ -35,7 +35,8 @@ def fake_runner(client: TestClient):
     """Install a canned `GraphResult` — or an exception to raise — as the graph.
 
     Substitutes through the REAL HTTP stack via `dependency_overrides`, so the status
-    codes in PLAN §23.6 are genuinely exercised, and it never touches an import path.
+    codes in the AI route's error table are genuinely exercised, and it never touches
+    an import path.
     `calls` records every `GraphInput` the route built, which is how the clamp, the
     history truncation and the filename are asserted from the outside.
     """

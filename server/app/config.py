@@ -62,19 +62,18 @@ class Settings(BaseSettings):
     max_context_name_chars: int = 120
     max_operations: int = 20
     # PER LLM CALL. Passed as `timeout=` on every chat.completions.parse. 1.79x the
-    # slowest of the 14 calls 4Z measured (max 6.7 s, median 1.5 s — PLAN §20.7).
+    # slowest of the 14 calls measured live (max 6.7 s, median 1.5 s).
     ai_node_timeout_seconds: float = 12.0
     # "Extra draft attempts". graph.max_draft_attempts() is derived as this + 1, AT CALL
-    # TIME, so the two can never drift and so this value is a real runtime lever
-    # (PLAN §30.1). Do not add a third name for this number, and do not cache it in a
-    # module constant.
+    # TIME, so the two can never drift and so this value is a real runtime lever. Do not
+    # add a third name for this number, and do not cache it in a module constant.
     judge_max_retries: int = 1
     # Wall-clock budget for the whole graph, checked at the TOP of every node. It is a
-    # HUNG-SOCKET BACKSTOP with no reachable path in the legitimate configuration — the
-    # full derivation, and why that is correct rather than a gap, is in PLAN §3.4.
+    # HUNG-SOCKET BACKSTOP with no reachable path in the legitimate configuration: five
+    # node calls at 12 s each is 60 s, which is already under this.
     ai_graph_deadline_seconds: float = 65.0
     # asyncio.wait_for around the whole run. Strictly above the graph deadline. Note
-    # that it releases the REQUEST, not the worker thread (PLAN §3.4 point 3, §28.3).
+    # that it releases the REQUEST, not the worker thread.
     ai_request_timeout_seconds: float = 75.0
     proposal_ttl_seconds: int = 900
     # None => the kwarg is omitted entirely, and None is the SHIPPED value.
@@ -84,10 +83,10 @@ class Settings(BaseSettings):
     # COMBINATION is not: gpt-5.2-2025-12-11 rejects `reasoning_effort` together with
     # any `temperature` other than the default 1, with
     #   400 "Unsupported value: 'temperature' does not support 0.0 with this model."
-    # Measured 2026-08-14 (PLAN §27.4 correction 40):
+    # Measured 2026-08-14:
     #   effort + no temperature -> OK      effort + temperature=0.0 -> 400
     #   effort + temperature=1.0 -> OK     no effort + temperature=0.0 -> OK
-    # §21.2 sends temperature=0 on understand/plan_ops/judge, so with effort="low"
+    # llm.py sends temperature=0 on understand/plan_ops/judge, so with effort="low"
     # three of the five nodes 400 on every call and the feature does not work at all.
     #
     # `reasoning_effort` is the one that goes, because 4Z also measured

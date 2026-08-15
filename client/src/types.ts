@@ -1,15 +1,10 @@
 /**
- * The wire format, snake_case, mirroring the FastAPI schemas field for field.
+ * The wire format, snake_case, mirroring the FastAPI schemas field for field. No camelCase
+ * mapping layer: it would be pure translation whose only failure mode is silent drift.
  *
- * There is deliberately no camelCase mapping layer: it would be pure translation
- * whose only failure mode is silent drift, and it turns every "is this field
- * named right?" question into a two-file lookup.
- *
- * `server/tests/test_client_contract.py` reads the `export interface X {` blocks
- * in this file and asserts each one names a server schema with the same fields,
- * so every interface below must be a real wire shape. `Page<T>` is generic and
- * therefore invisible to that regex — which is what we want, since FastAPI names
- * the envelope per item type.
+ * `server/tests/test_client_contract.py` reads the `export interface X {` blocks here and
+ * asserts each names a server schema with the same fields, so every interface below must be
+ * a real wire shape. `Page<T>` is generic and invisible to that regex, as intended.
  */
 
 /** The list envelope shared by both paginated endpoints. */
@@ -93,10 +88,8 @@ export interface ChatTurn {
   content: string;
 }
 
-/**
- * Read-only context. Deliberately carries no ProseMirror positions: nothing on the
- * wire can address a range, so no operation can target one.
- */
+/** Read-only context, carrying no ProseMirror positions: nothing on the wire can address a
+ *  range, so no operation can target one. */
 export interface AiSelection {
   text: string;
   claim_numbers: number[];
@@ -133,12 +126,8 @@ export interface AiVerifyReport {
   warnings: string[];
 }
 
-/**
- * Round-trips through this client between the two AI calls. The server keeps no copy,
- * so there is nothing to lose on a restart — and nothing to garbage-collect either.
- * It carries no HTML of any kind: the preview is `summary` plus the operations' own
- * text, rendered by us.
- */
+/** Round-trips through this client between the two AI calls, so the server keeps no copy to
+ *  lose or expire. It carries no HTML: the preview is `summary` plus the operations. */
 export interface AiProposal {
   proposal_id: string;
   document_id: number;
@@ -174,9 +163,8 @@ export interface AiChatRequest {
 export interface AiChatResponse {
   status: "applied" | "proposal" | "answer" | "no_change" | "needs_clarification" | "error";
   message: string;
-  /** Non-null if and only if `status === "applied"`. The server nulls it on every
-   *  other outcome, so `if (res.html)` is the whole of invariant 3 on this side.
-   *  From /chat it additionally implies the request carried `consented: true`. */
+  /** Non-null if and only if `status === "applied"`; the server nulls it on every other
+   *  outcome. From /chat it also implies the request carried `consented: true`. */
   html: string | null;
   /** Non-null if and only if `status === "proposal"`. */
   proposal: AiProposal | null;
@@ -184,9 +172,8 @@ export interface AiChatResponse {
   warnings: string[];
   /** Claim numbers whose quotes the SERVER verified. Only ever populated on `answer`. */
   citations: number[];
-  /** Complete prefilled instructions. Clicking one SENDS it verbatim as the next
-   *  instruction — never an id, because an id would need server state between two
-   *  HTTP calls. Only ever populated on `needs_clarification`. */
+  /** Complete prefilled instructions, sent verbatim when clicked — never an id, which would
+   *  need server state between two HTTP calls. Only populated on `needs_clarification`. */
   options: string[];
 }
 

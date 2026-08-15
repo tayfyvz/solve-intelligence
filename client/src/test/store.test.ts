@@ -12,8 +12,8 @@ import type {
 // The store's only dependency is the api module, so one `vi.mock` isolates it
 // completely. `toMessage` and `ApiError` are kept real — they are pure, and the
 // error text the store surfaces should be the text the app really shows.
-vi.mock("../api", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../api")>()),
+vi.mock("../services/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../services/api")>()),
   listDocuments: vi.fn(),
   createDocument: vi.fn(),
   getDocument: vi.fn(),
@@ -38,7 +38,7 @@ const {
   renameDocument,
   renameVersion,
   updateVersion,
-} = vi.mocked(await import("../api"));
+} = vi.mocked(await import("../services/api"));
 const { useDocumentStore, PAGE_SIZE } = await import("../store");
 
 const store = () => useDocumentStore.getState();
@@ -313,8 +313,8 @@ describe("selection ordering", () => {
 });
 
 describe("pagination", () => {
-  // Not in the §11 table: `loadDocuments`' auto-select is the reason the first
-  // paint is not an empty editor column, and nothing else covers it.
+  // `loadDocuments`' auto-select is the reason the first paint is not an empty editor
+  // column, and nothing else covers it.
   it("loadDocuments stores the page and selects the first document", async () => {
     listDocuments.mockResolvedValue(documentPage([4, 5], { total: 42 }));
     getDocument.mockResolvedValue(detail(4, 2, 2));

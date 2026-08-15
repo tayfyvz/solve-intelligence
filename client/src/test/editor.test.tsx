@@ -2,8 +2,8 @@ import { StrictMode } from "react";
 import { fireEvent, render, waitFor } from "@testing-library/react";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import Editor from "../components/Editor";
-import editorSource from "../components/Editor.tsx?raw";
+import Editor from "../features/editor/Editor";
+import editorSource from "../features/editor/Editor.tsx?raw";
 import { useDocumentStore } from "../store";
 
 // jsdom has no layout engine, and `Range.prototype.getClientRects` is missing

@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 
-import ErrorBoundary from "../components/ErrorBoundary";
+import ErrorBoundary from "../components/ui/ErrorBoundary";
 
 function Explodes(): never {
   throw new Error("Cannot read properties of null");

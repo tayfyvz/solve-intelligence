@@ -111,7 +111,7 @@ def test_expected_claim_count_mismatch_is_an_error() -> None:
     ],
 )
 def test_stress_shapes_do_not_error(before: str, after: str, expected: int) -> None:
-    """VF6 — the eight rows of PLAN §19.6."""
+    """VF6 — the eight verifier rows."""
     assert verify(before, after, expected_claims=expected).ok
 
 
@@ -305,7 +305,7 @@ def test_check_citations_flags_a_quote_that_is_not_in_the_document() -> None:
 def test_deterministic_budget_at_the_input_cap(capsys: pytest.CaptureFixture) -> None:
     """VF18 — a 3C gate row, because the path it times runs through `apply_plan`.
 
-    PLAN §3.4 reserves 2.0 s for ALL deterministic work in a run, and the whole timeout
+    The timeout chain reserves 2.0 s for ALL deterministic work in a run, and the whole
     chain — the per-call ceiling, the graph deadline, the request timeout, the client's
     budget — is derived from that reservation holding. The figure originally came from
     the 2.7 KB seeds, where the real cost is ~25 ms. The AI path accepts 200 000
@@ -359,7 +359,7 @@ def test_check_citations_and_verified_refs() -> None:
     """VF14 — a 4A gate row living here, because its fixtures are 4A types.
 
     The unpack is the one `_verify` does, and the second half is what pins the retype
-    (PLAN §19.5): the same call made with plain triples — no Pydantic anywhere — must
+    the same call made with plain triples — no Pydantic anywhere — must
     return the identical result. That is the assertion that verify.py never needs
     schemas.py, and therefore that this module could ship at 3D.
     """

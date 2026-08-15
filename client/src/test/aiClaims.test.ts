@@ -3,7 +3,7 @@ import { DOMParser as PMDOMParser, type Node as PMNode } from "@tiptap/pm/model"
 import StarterKit from "@tiptap/starter-kit";
 import { describe, expect, it } from "vitest";
 
-import { claimSpans, claimsInRange, type ClaimSpan } from "../ai/claims";
+import { claimSpans, claimsInRange, type ClaimSpan } from "../features/editor/claims";
 import { SEED_1, SEED_2 } from "./seed.fixture";
 
 const schema = getSchema([StarterKit]);
@@ -27,9 +27,9 @@ const blocksPerSpan = (doc: PMNode, spans: ClaimSpan[]): number[] =>
     return blocks;
   });
 
-// X1/X2. The seeds are the only claim documents anyone will actually demo, and their
-// block profiles are recorded independently in CLAUDE.md / §2.3 C29 — so this asserts
-// against a documented fixture, not against the walker's own opinion.
+// The seeds are the only claim documents anyone will demo, and their block profiles are
+// recorded independently in CLAUDE.md — so this asserts against a documented fixture
+// rather than against the walker's own opinion.
 describe.each([
   { name: "patent 1", html: SEED_1, numbers: [1, 2, 3, 4, 5, 6, 7, 8], blocks: [5, 1, 1, 4, 1, 5, 1, 1] },
   { name: "patent 2", html: SEED_2, numbers: [1, 2, 3, 4, 5, 6, 7, 8, 9], blocks: [6, 1, 1, 1, 1, 1, 5, 1, 1] },

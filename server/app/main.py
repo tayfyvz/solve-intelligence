@@ -100,8 +100,8 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
         except Exception as exc:
             # The TYPE and the path, never str(exc): a ValidationError's message quotes
             # the input that failed, and on this server that input is a customer's
-            # unpublished patent text (PLAN §28.2.5). logger.exception would render the
-            # traceback, whose final line is that same message.
+            # unpublished patent text. logger.exception would render the traceback, whose
+            # final line is that same message.
             logger.error(
                 "http.unhandled type=%s method=%s path=%s",
                 type(exc).__name__,

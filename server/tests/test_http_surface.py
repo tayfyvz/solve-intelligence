@@ -82,7 +82,7 @@ def test_an_oversized_body_is_413_and_the_content_cap_still_answers_itself(
 
 
 def test_a_422_does_not_echo_the_rejected_input_back(client: TestClient) -> None:
-    """PLAN §28.2.5 applies to responses too. FastAPI's default handler puts the
+    """The logging policy applies to responses too. FastAPI's default handler puts the
     rejected value in an `input` field, so a 10,000-character title — a customer's
     unpublished patent text on this server — went back over the wire in full. The
     location and the reason stay; the value goes."""

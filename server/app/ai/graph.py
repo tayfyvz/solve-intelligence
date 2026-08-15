@@ -86,7 +86,7 @@ class State(TypedDict, total=False):
     started_at: float  # time.monotonic() — the deadline check reads this
     req: str  # per-request UUID4 hex, minted in the route. The ONLY thing that
     # correlates a /chat log line to the /apply that followed it, and
-    # it costs one field (PLAN §28.2.5). Not a tracing system: no
+    # it costs one field. Not a tracing system: no
     # spans, no propagation to the OpenAI call, no sampling.
 
     pending_question: str | None  # the clarifying question we asked last turn, or None

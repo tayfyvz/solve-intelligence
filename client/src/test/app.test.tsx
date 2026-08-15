@@ -8,8 +8,8 @@ import type { DocumentDetail, DocumentPage, VersionPage, VersionRead } from "../
 
 // One mock for the whole seam. `toMessage` and `ApiError` stay real: the first
 // test asserts that what the UI shows is what `toMessage` produced.
-vi.mock("../api", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../api")>()),
+vi.mock("../services/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../services/api")>()),
   listDocuments: vi.fn(),
   createDocument: vi.fn(),
   getDocument: vi.fn(),
@@ -27,7 +27,7 @@ vi.mock("../api", async (importOriginal) => ({
 // It reads `content` once, at mount, exactly as the real uncontrolled editor
 // does, so an assertion about what is on screen after a switch means the same
 // thing here as it does in the browser.
-vi.mock("../components/Editor", async () => {
+vi.mock("../features/editor/Editor", async () => {
   const { useState } = await import("react");
   function EditorStub({ content }: { content: string }) {
     const [mountedWith] = useState(content);
@@ -48,7 +48,7 @@ const {
   renameDocument,
   renameVersion,
   updateVersion,
-} = vi.mocked(await import("../api"));
+} = vi.mocked(await import("../services/api"));
 const { useDocumentStore, PAGE_SIZE } = await import("../store");
 const { default: App } = await import("../App");
 

@@ -6,8 +6,8 @@ import { DecorationSet, type Decoration } from "@tiptap/pm/view";
 import StarterKit from "@tiptap/starter-kit";
 import { describe, expect, it, vi } from "vitest";
 
-import { highlightKey, highlightPlugin } from "../ai/highlight";
-import { buildSelectionContext, subscribeToSelection } from "../ai/selection";
+import { highlightKey, highlightPlugin } from "../features/editor/highlight";
+import { buildSelectionContext, subscribeToSelection } from "../features/chat/selection";
 
 const schema = getSchema([StarterKit]);
 

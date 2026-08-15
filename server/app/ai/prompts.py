@@ -3,7 +3,7 @@
 Imports `re`, `app.ai.schemas` and one Protocol — no `openai`, no `langgraph`, no I/O —
 so fencing, history capping and truncation are all testable with no key and no network.
 
-The rule the whole file obeys, stated once (PLAN §21.6):
+The rule the whole file obeys, stated once:
 
     **build_outline understands, build_context generates.**
 

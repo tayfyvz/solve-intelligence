@@ -1,13 +1,13 @@
 # CLAUDE.md
 
-Guidance for working in this repository. `DESIGN.md` holds the *what and why*; this file holds the
-*how* — commands, invariants, and the traps specific to this codebase.
+Guidance for working in this repository: commands, architecture invariants, and the traps
+specific to this codebase. `README.md` holds the *what and why*.
 
 ## Project
 
 A patent reviewing application: React + TipTap frontend, FastAPI + SQLAlchemy backend.
-Two features are being built on an inherited scaffold — **document versioning** and
-**AI-powered editing via chat** (see `DESIGN.md`).
+Two features are built on an inherited scaffold — **document versioning** and **AI-powered
+editing via chat** (see the improvements write-up in `README.md`).
 
 This is an engineering challenge submission. Two consequences that override normal defaults:
 
@@ -255,7 +255,7 @@ by **heading text only** (the same way `insert_section` already addresses one), 
 cannot reach the claims — `doc.claims_heading` is its own field, never a member of the
 `preamble`/`postamble` lists this op searches, so "delete the Claims section" finds nothing to
 delete rather than deleting the claims. No new guard, no new ordering rule beyond one arbitrary
-`KIND_ORDER` placement; see `DESIGN.md` §5.3.
+`KIND_ORDER` placement.
 
 Do not build: Option B (collaboration, presence, CRDT), auth, autosave, version **diff**,
 streaming, agent loops, persisted chat, or CI. *(This list used to ban version
@@ -269,7 +269,7 @@ view is a genuinely bigger feature (a rendering and computation problem, not CRU
 has asked for it. The one invariant a delete must preserve: **a document can never be left with
 zero versions** — deleting the last remaining version of a document must be refused (409), the
 same shape as the currently-open-version guard `PUT /versions/{n}` already needs.)* "Not overly
-complex" is an explicit requirement of the brief. Ideas beyond scope belong in the `DESIGN.md`
+complex" is an explicit requirement of the brief. Ideas beyond scope belong in `README.md`'s
 future-work section, not in the code.
 
 **RAG came off that list**, on the repo owner's explicit authorisation, when long patents

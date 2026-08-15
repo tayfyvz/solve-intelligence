@@ -272,7 +272,7 @@ def _status_error(cls, code: int):
 def test_chat_failure_table(
     client: TestClient, fake_runner, label, overrides, raises, code, detail
 ) -> None:
-    """R3 — one case per row of PLAN §23.6 table A. Exact status AND exact sentence.
+    """R3 — one case per row of the route's error table. Exact status AND exact sentence.
 
     The exception rows matter most: `APITimeoutError` subclasses `APIConnectionError`,
     and four others subclass `APIStatusError`, so a map in the wrong order collapses five

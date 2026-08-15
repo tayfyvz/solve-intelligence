@@ -32,11 +32,10 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# PLAN §21.3. The three nodes whose output is a DECISION run at temperature=0, so the
-# same instruction resolves the same way twice; the two whose output is PROSE keep the
-# API default, so a draft rejected by the judge can actually come back different.
-# 4Z measured 0.0, 1.0 and 2.0 all ACCEPTED on this model, correcting the earlier
-# "reasoning model — send no temperature" assumption, which was never tested.
+# The three nodes whose output is a DECISION run at temperature=0, so the same instruction
+# resolves the same way twice; the two whose output is PROSE keep the API default, so a
+# draft rejected by the judge can actually come back different. 0.0, 1.0 and 2.0 were all
+# measured as accepted on this model.
 UNDERSTAND_TOKENS, UNDERSTAND_TEMPERATURE = 1200, 0.0
 PLAN_TOKENS, PLAN_TEMPERATURE = 2500, 0.0
 DRAFT_TOKENS, DRAFT_TEMPERATURE = 3000, None
@@ -59,8 +58,8 @@ def _get_client() -> OpenAI:
     503 path and the entire no-key reviewer experience with it. Construct on first use.
 
     max_retries=0, not the SDK default of 2 and not 1: the graph makes up to FIVE calls,
-    so even one SDK retry doubles the worst case to 150 s and breaks the timeout chain in
-    PLAN §3.4. Retry is the judge loop's job — the retry the user actually benefits from.
+    so even one SDK retry doubles the worst case to 150 s and breaks the timeout chain.
+    Retry is the judge loop's job — the retry the user actually benefits from.
     The accepted cost is that one transient 429 fails the request.
     """
     global _client
@@ -99,8 +98,8 @@ def _parse[T: BaseModel](
         model=settings.openai_model,
         messages=messages,
         response_format=response_format,
-        timeout=settings.ai_node_timeout_seconds,  # PER CALL — PLAN §3.4
-        max_completion_tokens=max_output_tokens,  # 4Z measured reasoning_tokens == 0,
+        timeout=settings.ai_node_timeout_seconds,  # PER CALL, not per request
+        max_completion_tokens=max_output_tokens,  # reasoning_tokens measured as 0,
         **extra,  # so this bounds the VISIBLE answer
     )
     choice = completion.choices[0]

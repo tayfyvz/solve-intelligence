@@ -56,7 +56,7 @@ _INLINE_TAGS = INLINE_ONLY_TAGS | INLINE_DESCEND_TAGS
 # would serialise as `<p>a & b <script></p>` — escaped text becoming live markup. T4
 # fails loudly if this argument is ever dropped.
 #
-# substitute_xml, NOT substitute_html (which PLAN §15.1 specified). Both enable
+# substitute_xml, NOT substitute_html. Both enable
 # escaping, so both close C17. They differ on everything else: substitute_html also
 # names every non-ASCII character, so `café — 3°` serialises as `caf&eacute; &mdash;
 # &deg;` while TipTap emits the characters raw — and identity, render(parse(x)) == x,
@@ -110,7 +110,7 @@ class Claim:
 @dataclass
 class ParsedDocument:
     preamble: list[Block] = field(default_factory=list)
-    claims_heading: Block | None = None  # its own field, NOT an index (PLAN §1.2.1)
+    claims_heading: Block | None = None  # its own field, NOT an index
     claims: list[Claim] = field(default_factory=list)
     postamble: list[Block] = field(default_factory=list)
 

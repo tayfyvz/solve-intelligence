@@ -2,17 +2,17 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CONTEXT_LIMIT, IMPORT_LIMIT, readTextFile } from "../textFile";
-import dialogSource from "../components/ImportPatentDialog.tsx?raw";
+import { CONTEXT_LIMIT, IMPORT_LIMIT, readTextFile } from "../utils/textFile";
+import dialogSource from "../features/patents/ImportPatentDialog.tsx?raw";
 import type { TextImportResult } from "../types";
 
-vi.mock("../api", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../api")>()),
+vi.mock("../services/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../services/api")>()),
   importText: vi.fn(),
 }));
 
-const { importText } = vi.mocked(await import("../api"));
-const { default: ImportPatentDialog } = await import("../components/ImportPatentDialog");
+const { importText } = vi.mocked(await import("../services/api"));
+const { default: ImportPatentDialog } = await import("../features/patents/ImportPatentDialog");
 
 const txt = (name: string, body: string) =>
   new File([body], name, { type: "text/plain" });
@@ -138,7 +138,7 @@ describe("IM-C3 failures are visible, never only in the console", () => {
   });
 
   it("shows the server's own sentence when the conversion fails", async () => {
-    const { ApiError } = await import("../api");
+    const { ApiError } = await import("../services/api");
     importText.mockRejectedValue(new ApiError(413, "That file is too large to import."));
     open();
 

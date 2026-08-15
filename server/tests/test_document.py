@@ -289,7 +289,7 @@ def test_headingless_two_claim_document_uses_the_fallback() -> None:
 
 
 def test_headingless_one_claim_document_has_no_claims() -> None:
-    """T13 — conservative by design, and documented in PLAN §2.4."""
+    """T13 — conservative by design."""
     doc = parse("<p>1. only one claim</p>")
     assert doc.claims == []
     assert render(doc) == "<p>1. only one claim</p>"

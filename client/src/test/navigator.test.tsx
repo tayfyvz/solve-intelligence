@@ -2,9 +2,9 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
-import Editor from "../components/Editor";
-import FindBar from "../components/FindBar";
-import Outline from "../components/Outline";
+import Editor from "../features/editor/Editor";
+import FindBar from "../features/editor/FindBar";
+import Outline from "../features/editor/Outline";
 import { useDocumentStore } from "../store";
 
 /**

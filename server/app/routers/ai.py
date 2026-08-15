@@ -209,7 +209,7 @@ def _done(req: str, started: float, llm_calls: int, response: AiChatResponse) ->
 
     Wrapped around the return rather than repeated at nine call sites, so a future
     branch that forgets it does not silently lose the only record that the request
-    finished. `message` is never logged: it is model prose (PLAN §28.2.5).
+    finished. `message` is never logged: it is model prose.
     """
     logger.info(
         "ai.done req=%s status=%s ms_total=%d llm_calls=%d warnings=%d html=%s proposal=%s",

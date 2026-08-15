@@ -30,7 +30,7 @@ OpKind = Literal[
     "insert_section",
     "delete_section",
     "replace_text",
-]  # seven — delete_section was cut in PLAN §1.1 and reinstated on the repo owner's
+]  # seven — delete_section was cut once and reinstated on the repo owner's
 #    explicit direction (2026-08-14): unrestricted deletion is a hard requirement. Its
 #    original blocker — the planner is never shown a section's body, so it cannot build a
 #    safe `find` string — is sidestepped by matching on HEADING text only, the same way

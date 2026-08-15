@@ -5,7 +5,7 @@ Not collected by pytest (`testpaths = ["tests"]`), so `uv run pytest` never touc
     uv run python scripts/smoke_llm.py              # CHECK 1-6, the 4Z pre-flight
     uv run python scripts/smoke_llm.py --wrappers   # every llm.py wrapper, end to end
 
-**4Z was run on 2026-08-13 and its answers are recorded in PLAN §20.7.** This script is
+**It was last run on 2026-08-13; the measured numbers are in CLAUDE.md.** This script is
 the artefact that produced them — a script with no recorded output proves nothing a
 month later, and a recorded output with no script cannot be re-run. Re-running it is a
 way to re-prove the six answers against a new key or a new model id, not a step anybody
@@ -116,7 +116,7 @@ def check_4_reasoning_effort(client: OpenAI) -> None:
 
 
 def check_5_latency(client: OpenAI, timings: list[float]) -> None:
-    """Print the numbers PLAN §3.4's whole chain is derived from."""
+    """Print the numbers the timeout chain is derived from."""
     timings = list(timings)
     for _ in range(2):
         timings += check_3_ceilings(client)
